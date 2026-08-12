@@ -26,8 +26,8 @@ Five people, invite-only, no public signup. All five see all data.
 | Ryan Beale | Managing Director | Admin | ryan@bealesllc.com | **Yes** |
 | Jon Beale | President, Owner | Leadership | jbeale@bealesllc.com | **Yes** |
 | Robert Mulligan | Managing Director | Leadership | rmulligan@bealesllc.com | **Yes** |
-| Bob Mulligan | Vice President, Owner | Leadership | bmulligan@bealesllc.com | No |
-| Victor Melo | Area Manager | Leadership / field | vmelo@bealesllc.com | No |
+| Bob Mulligan | Vice President, Owner | Leadership | bmulligan@bealesllc.com | **Yes** |
+| Victor Melo | Area Manager | Field | vmelo@bealesllc.com | No |
 
 Non-admins have full read/write on accounts, buildings, contacts, activities, opportunities, projects, and employees. Admins additionally manage users, reference data, and imports.
 
@@ -35,7 +35,7 @@ Non-admins have full read/write on accounts, buildings, contacts, activities, op
 
 The original spec spelled Robert's surname "Milligan", which is wrong — there is no Milligan at the company. Corrected 2026-08-12. If you find "Milligan" anywhere in this repo, it means Robert Mulligan.
 
-Rate access belongs to **Robert Mulligan (`rmulligan@`)**. Bob Mulligan does **not** have it, despite being an owner — Ryan's explicit choice.
+**Pay rates: everyone except Victor Melo.** Confirmed 2026-08-12. Four of the five see pay rates, bill rates and labour margin; Victor, who is in the field, does not.
 
 ## Who Ryan is, and how to work with him
 

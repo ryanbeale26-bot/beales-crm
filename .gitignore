@@ -35,3 +35,10 @@ yarn-error.log*
 # supabase local dev
 /supabase/.branches
 /supabase/.temp
+
+# Real business data — customer names, contract values, payroll. Never commit.
+# Put the exported spreadsheet and any CSVs here.
+/private-data/
+*.xlsx
+*.xls
+*.csv
