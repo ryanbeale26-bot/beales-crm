@@ -104,8 +104,9 @@ Build the importer as a reusable admin screen — upload CSV → map columns →
 
 Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a working product before touching any integration.
 
-- [ ] **Phase 0** — Scaffold, this file, proposed schema, open questions
-- [ ] **Phase 1** — Auth + five users. Full schema built now. UI: accounts, buildings, contacts CRUD, account detail page with tabs, CSV importer. Migrate tabs 2 and 3.
+- [x] **Phase 0** — Scaffold, this file, full schema written and verified, open questions
+- [ ] **Phase 1a** — Apply migrations, create the five users, accounts / buildings / contacts CRUD, account detail page with tabs
+- [ ] **Phase 1b** — CSV importer (upload → map columns → preview → confirm). Migrate tabs 2 and 3.
 - [ ] **Phase 2** — Quick-add activity logging, timelines, activity feed with filters. Migrate tab 4. *This is the daily-habit feature — the whole project rests on it.*
 - [ ] **Phase 3** — Opportunities kanban, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report. Migrate tabs 1 and 5.
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects
@@ -115,9 +116,33 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 0 — not started
-**Last session:** —
-**Next action:** Propose schema for Ryan's review; ask the Phase 0 questions.
+**Phase:** 0 — complete, waiting on Ryan's Supabase credentials
+**Last session:** 2026-08-12
+
+**What exists:** Next.js 16 + TypeScript + Tailwind 4 scaffold. Supabase clients for
+browser and server. Login by password or magic link. Signed-out visitors are redirected
+before any content renders. The full schema is written as two migrations and verified —
+but **not yet applied to a real database**.
+
+**Blocked on:** Ryan creating the Supabase project and pasting the URL and keys into
+`.env.local`. Nothing else can be tested until then.
+
+**Next action (Phase 1a):**
+1. Ryan fills in `.env.local`, then `npx supabase link` + `npx supabase db push`.
+2. Create the five users with `npm run user:create`.
+3. Confirm login works end to end, then build accounts / buildings / contacts CRUD.
+
+### How to work in this repo
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Local app on http://localhost:3000 |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed |
+| `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
+| `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
+| `npx supabase db push` | Applies migrations to the real Supabase project |
+
+Note: `next dev` appends an auto-generated block to the bottom of this file. Leave it committed.
 
 ---
 
@@ -133,11 +158,28 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Open questions
 
-- [ ] Deal stage names — the six in the spec are a starting point, not a decision. Ask at the start of Phase 3 and derive candidates from the stage column in tab `1-Pipeline`.
-- [ ] Exact column headers for each sheet tab — ask per phase.
-- [ ] Sender email addresses for the weekly payroll emails from Victor Melo, Robert Milligan, and Bob Mulligan.
-- [ ] InspectQA schema and read-only credentials — Ryan provides at Phase 7.
+**Blocking Phase 1a:**
+- [ ] Confirm the third person with pay-rate access is **Robert Milligan**, not Bob Mulligan. Ryan answered "Robert"; both names are close and the two are distinct people.
+- [ ] Supabase project created? Region `us-east-1`. URL + anon key + service role key into `.env.local`.
+- [ ] The five login email addresses — and whether the other four check that address on their phone (matters for magic links).
+- [ ] Private GitHub repo name and owner; Vercel project.
+
+**Blocking Phase 1b (the import):**
+- [ ] Exact column headers of `2-Active Clients` and `3-Contact Directory`, or a CSV export of both.
+- [ ] Are the sheet's contract values monthly or annual, and do they include project/extra work or only the recurring contract?
+- [ ] Building statuses beyond pending / active / lost — on hold, seasonal, month-to-month?
+- [ ] Does a building ever move between Beale's LLC and AFS? If so, `entity` needs dating the way contract value is.
+- [ ] Can one building ever be billed to two accounts? Assumed no.
+
+**Review when convenient:**
+- [ ] `property_types`, `loss_reasons` and `lead_sources` are seeded with placeholders — see `20260812180100_reference_data.sql`. Replace with the real lists.
+- [ ] Phase 2 decision: offline outbox for unsent activities (IndexedDB). Conflicts with the "no localStorage" rule; argued for in the Decision Log.
+
+**Later phases:**
+- [ ] Deal stage names — Phase 3. The seven seeded stages are placeholders; derive real ones from the stage column in tab `1-Pipeline`.
 - [ ] `0-Dashboard` formulas or screenshot — needed before designing the Phase 5 dashboard.
+- [ ] Sender email addresses for the weekly payroll emails, plus 3–4 real samples before the parser is written — Phase 7.
+- [ ] InspectQA schema and read-only credentials — Ryan provides at Phase 7.
 
 ## Decision log
 
@@ -146,3 +188,24 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 | — | Separate Supabase project from InspectQA | Spinout separability + protecting a live client-facing app from CRM migrations |
 | — | Building-level contract and rate data, accounts as a rollup | Correct revenue reporting; can lose a building without losing the account |
 | — | Accounts + activity logging before pipeline | Activity logging is the habit everything downstream depends on |
+| 2026-08-12 | **Contract value is a history table, not a column.** `building_contract_periods` holds effective/end dates per value; `buildings` has no monthly value at all. The UI still shows one "Monthly value" field and calls `set_building_monthly_value()` behind it | A single column cannot answer "what was MRR in March", which makes the revenue growth waterfall (new / expansion / contraction / churn) unbuildable. Ryan has only today's values, so history starts at go-live and accrues forward |
+| 2026-08-12 | Churn comes from a contract period ending, never from `buildings.status = 'lost'` | A building marked lost with no period end would keep billing forever in the reports |
+| 2026-08-12 | Deal stages, property types, loss reasons, lead sources are **tables, not Postgres enums** | Admins must rename them without a migration, and the stage names are explicitly unsettled. Enums are reserved for values the app code branches on |
+| 2026-08-12 | **Pay/bill rates live in separate tables** (`employee_compensation`, `employee_assignment_rates`) rather than as columns on employees/assignments | Ryan chose Ryan + Jon + Robert only for rate visibility. Postgres RLS filters rows, not columns, so hiding a column means moving it to its own table. Everyone can still see who works where and for how many hours |
+| 2026-08-12 | Activities carry five nullable FKs, and a trigger stamps `account_id` from the building / opportunity / contact | A complaint logged against a building must appear on the account timeline in one indexed query, with no joins at read time |
+| 2026-08-12 | Audit triggers are on from day one, though the audit UI is Phase 6 | History cannot be backfilled. The trigger ignores `updated_at` so no-op saves don't fill the log with noise |
+| 2026-08-12 | Every importer-created row carries `import_batch_id` | Ryan will re-import several times. Undoing a bad import is one delete, not hand-cleaning the portfolio |
+| 2026-08-12 | Schema is verified with PGlite (`npm run db:verify`), not Docker | No Docker on this machine, and 700 lines of SQL should not reach a real database unverified. It caught two real bugs: the audit trigger assumed every table has an `id` column, and the MRR waterfall invented a phantom churn month one month in the future |
+| 2026-08-12 | Login is password-primary with magic link as the forgot-password path | Ryan's choice. Field staff may not have easy email access, but nobody should be locked out |
+| 2026-08-12 | Phase 1 split into 1a (schema + CRUD) and 1b (importer + migration) | Ryan sees working screens sooner; the importer is the bigger, fiddlier half |
+| 2026-08-12 | `middleware.ts` → `proxy.ts` | Next 16 deprecated the middleware filename and prints a codemod notice. Greenfield project, so take the new name now |
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
