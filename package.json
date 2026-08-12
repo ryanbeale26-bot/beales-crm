@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "db:verify": "node scripts/verify-schema.mjs",
+    "db:check-remote": "node scripts/check-remote.mjs",
     "user:create": "node scripts/create-user.mjs"
   },
   "dependencies": {
