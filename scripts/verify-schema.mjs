@@ -303,14 +303,14 @@ async function main() {
     set local test.user_id = '${RYAN}';
     insert into opportunities (id, name, stage_id)
     select '55555555-5555-5555-5555-555555555555', 'New tower', id
-    from pipeline_stages where name = 'Identified';
+    from pipeline_stages where name = 'Targeting';
   `)
   const stageEvents = await db.query('select count(*)::int as n from opportunity_stage_events')
   check('creating a deal records its opening stage', stageEvents.rows[0].n === 1)
 
   await db.exec(`
     set local test.user_id = '${RYAN}';
-    update opportunities set stage_id = (select id from pipeline_stages where name = 'Qualified')
+    update opportunities set stage_id = (select id from pipeline_stages where name = 'Hot Lead')
     where id = '55555555-5555-5555-5555-555555555555';
   `)
   const stageEvents2 = await db.query(

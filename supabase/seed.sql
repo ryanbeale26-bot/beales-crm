@@ -64,7 +64,7 @@ select
   'aaaaaaaa-0000-4000-8000-000000000003',
   'Cambridge', 'MA',
   id, 9500, current_date + interval '45 days'
-from pipeline_stages where name = 'Proposal delivered'
+from pipeline_stages where name = 'RFP Sent'
 on conflict (id) do nothing;
 
 insert into activities (activity_type_id, subject, body, building_id, occurred_at)

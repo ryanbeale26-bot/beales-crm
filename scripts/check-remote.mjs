@@ -27,7 +27,7 @@ for (const table of ['accounts', 'buildings', 'contacts', 'activities', 'employe
 }
 
 console.log('\nReference data')
-const expected = { activity_types: 8, project_types: 10, property_types: 7, pipeline_stages: 7, loss_reasons: 8, lead_sources: 6 }
+const expected = { activity_types: 8, project_types: 10, property_types: 11, pipeline_stages: 8, loss_reasons: 8, lead_sources: 6 }
 for (const [table, n] of Object.entries(expected)) {
   const { count, error } = await admin.from(table).select('*', { count: 'exact', head: true })
   check(`${table} has ${n} rows`, count === n, error ? error.message : `got ${count}`)
@@ -38,9 +38,18 @@ for (const table of ['accounts', 'buildings', 'building_contract_periods', 'cont
                      'contact_buildings', 'employees', 'employee_assignments',
                      'employee_assignment_rates', 'opportunities', 'activities',
                      'projects', 'attachments', 'staffing_reports', 'inspections',
-                     'work_orders', 'audit_log', 'profiles', 'import_batches']) {
+                     'work_orders', 'audit_log', 'import_batches']) {
   const { count, error } = await admin.from(table).select('*', { count: 'exact', head: true })
   check(`${table}`, !error && count === 0, error ? error.message : `has ${count} rows`)
+}
+
+console.log('\nThe team')
+{
+  const { data, error } = await admin.from('profiles').select('full_name, email, role, sees_rates').order('full_name')
+  check('profiles exist', !error && data.length > 0, error?.message)
+  for (const p of data ?? []) {
+    console.log(`        ${(p.full_name || '(no name)').padEnd(18)} ${p.email.padEnd(26)} ${p.role.padEnd(11)} ${p.sees_rates ? 'sees rates' : '—'}`)
+  }
 }
 
 console.log('\nRevenue views')
