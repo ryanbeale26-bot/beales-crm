@@ -112,7 +112,47 @@ Six tabs, the source of truth for all existing data. **Ask for actual headers of
 | `4-Activity Log` | `activities` | 2 |
 | `5-Won/Loss Analysis` | Closed-won/lost history, loss reasons, competitors | 3 |
 
-**`2-Active Clients` is one row per building, not per account.** A customer with twelve buildings appears twelve times, and the accounts layer does not exist anywhere yet. The importer must derive accounts by grouping rows on customer name, then attach each row as a building. Names will be spelled inconsistently ("Healthcare Realty" vs. "Healthcare Realty Trust"), so the preview must show proposed account groupings and let Ryan merge them by hand before writing.
+### What the workbook actually contains (read 2026-08-12)
+
+The file lives at `private-data/Beales_CRM.xlsx` (git-ignored). **Every tab has its headers on row 4** — rows 1–3 are title banners. Row counts: Pipeline 52, Active Clients 38 + a `TOTAL ACTIVE ARR` row that must be skipped, Contacts ~57, Activity Log ~670, Won/Lost 19.
+
+**Real deal stages**, with the win probabilities from `0-Dashboard`:
+
+| Stage | Probability |
+|---|---|
+| Targeting | 5% |
+| Hot Lead | *not on the dashboard — ask* |
+| Pre-RFP | 15% |
+| RFP Sent | 35% |
+| RFP Response | *not on the dashboard — ask* |
+| Verbal Commitment | 75% |
+| Closed Won | 100% |
+| Closed Lost | 0% |
+
+This is an RFP-driven pipeline, nothing like the six placeholder stages in the original spec. Replace the seeded stages with these.
+
+**`0-Dashboard` mirrors, for Phase 5:** six KPI tiles (Active Clients, Pipeline Deals, Monthly ARR, Pipeline Value, Contacts, Win Rate), a pipeline-by-stage table (count, total annual value, win probability, weighted value), and a client-health summary (Healthy / Needs Attention / At Risk, with count and monthly ARR). Note "Monthly ARR" means MRR.
+
+**Things the schema did not anticipate:**
+
+- **Health Score** on each client — Healthy / Needs Attention / At Risk. Ryan already runs the business on it and the dashboard summarises by it. Needs a column on `buildings`.
+- **Activity Type is free text with ~95 distinct values** ("Email - Sent (Follow-Up)", "Meeting — Site Walk", "Site Visit (Deep Clean)"). They must be mapped down to a controlled list at import.
+- **Activity Source** includes iMessage, Google Calendar, Outlook Calendar, Cowork and "Nightly CRM Logger" — the `activity_source` enum needs extending.
+- **Owner is sometimes shared** — "Both", "Ryan / Robert" — and includes **Brendan**, who is not one of the five users.
+- **`3-Contact Directory` is not only client contacts.** Relationship Type includes Vendor, Internal, Employee, Union Partner, Subcontractor.
+- **`ICOR Quadrant`, `Filed to BKM?` and `BKM Path`** on the activity log are Ryan's personal knowledge-management taxonomy, not CRM fields.
+- **Only 11 of 39 client rows carry a monthly value.** Most of the portfolio has no contract figure in the sheet at all.
+- **`CleanSmarts ID`** is populated once — likely the precursor to `inspectqa_site_id`.
+- Loss data is thin: one recorded loss, to **Janitronics**.
+
+**Segments (become `property_types`):** Healthcare, Office, CRE / Life Sci, Biotech / Life Sci, Industrial, Property Mgmt, Government, Education, Multi-Family / Affordable Housing, Healthcare / Office (Union), Other - Services Vendor.
+
+**`2-Active Clients` is one row per building, not per account** — and it is worse than the spec suggested. There is no account column, no building-name column and no address column. All three are encoded in two free-text fields:
+
+- `Client Name` carries both, separated by an em-dash: `Tufts Medicine — CBRE (Reading)`, `Boston Scientific — Quincy`, `Fox Rock Properties — 38 Industrial Park Rd, Plymouth`.
+- `Service Scope` carries address, square footage and service type separated by `·`: `100 Adams Rd Clinton MA · 345,774 SF Industrial`. Not every row follows the pattern.
+
+So the importer must split on the em-dash to derive the account, parse `Service Scope` for address and square footage, and show Ryan the proposed groupings for manual merging before writing anything. Several real accounts have multiple sites already: Tufts Medicine — CBRE (4), Boston Scientific (3), JLL (3), Fox Rock Properties (4), Ciminelli (3), Medtronic Covidien (2), South Shore Health (several).
 
 Build the importer as a reusable admin screen — upload CSV → map columns → preview → confirm. Data will be re-imported and corrected several times.
 
