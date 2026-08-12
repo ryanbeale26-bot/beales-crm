@@ -21,15 +21,17 @@ The four jobs it must do:
 
 Five people, invite-only, no public signup. All five see all data.
 
-| Name | Role | Notes |
-|---|---|---|
-| Ryan Beale | Admin | Managing Director, the developer of this app |
-| Jon Beale | Leadership | Owner/President, Ryan's father |
-| Robert Milligan | Leadership | |
-| Bob Mulligan | Leadership | **Distinct person from Robert Milligan — do not dedupe** |
-| Victor Melo | Leadership / field | Site supervisor |
+| Name | Role | Sees pay rates | Notes |
+|---|---|---|---|
+| Ryan Beale | Admin | **Yes** | Managing Director, the developer of this app |
+| Jon Beale | Leadership | **Yes** | Owner/President, Ryan's father |
+| Robert Milligan | Leadership | **Yes** | Mil**li**gan |
+| Bob Mulligan | Leadership | No | Mul**li**gan. **Distinct person from Robert Milligan — do not dedupe** |
+| Victor Melo | Leadership / field | No | Site supervisor |
 
 Non-admins have full read/write on accounts, buildings, contacts, activities, opportunities, projects, and employees. Admins additionally manage users, reference data, and imports.
+
+**On the two similar names.** Robert Mil**li**gan and Bob Mul**li**gan are different people, and the surnames differ by one letter. Ryan has referred to "Robert Mulligan" in conversation and the original spec used both spellings in different places, so do not infer which person is meant — ask. Rate access belongs to **Robert Milligan**, confirmed 2026-08-12; Bob Mulligan does **not** have it.
 
 ## Who Ryan is, and how to work with him
 
@@ -171,10 +173,11 @@ Note: `next dev` appends an auto-generated block to the bottom of this file. Lea
 ## Open questions
 
 **Blocking Phase 1a:**
-- [ ] Confirm the third person with pay-rate access is **Robert Milligan**, not Bob Mulligan. Ryan answered "Robert"; both names are close and the two are distinct people.
-- [ ] Supabase project created? Region `us-east-1`. URL + anon key + service role key into `.env.local`.
-- [ ] The five login email addresses — and whether the other four check that address on their phone (matters for magic links).
-- [ ] Private GitHub repo name and owner; Vercel project.
+- [x] ~~Confirm the third person with pay-rate access~~ — **Robert Milligan**, confirmed 2026-08-12.
+- [x] ~~Supabase project~~ — `beales-crm` / `pjcitahktwnawucoznhk`, migrations applied, `.env.local` filled in.
+- [x] ~~Private GitHub repo~~ — created.
+- [ ] Login email addresses **and full legal names** for Jon Beale, Robert Milligan, Bob Mulligan and Victor Melo. Ryan is set up already (`ryan@bealesllc.com`). Legal names matter later: the payroll email parser has to match Paychex records, which use legal names, not "Bob".
+- [ ] Vercel project — not set up yet.
 
 **Blocking Phase 1b (the import):**
 - [ ] Exact column headers of `2-Active Clients` and `3-Contact Directory`, or a CSV export of both.
@@ -204,7 +207,7 @@ Note: `next dev` appends an auto-generated block to the bottom of this file. Lea
 | 2026-08-12 | **Contract value is a history table, not a column.** `building_contract_periods` holds effective/end dates per value; `buildings` has no monthly value at all. The UI still shows one "Monthly value" field and calls `set_building_monthly_value()` behind it | A single column cannot answer "what was MRR in March", which makes the revenue growth waterfall (new / expansion / contraction / churn) unbuildable. Ryan has only today's values, so history starts at go-live and accrues forward |
 | 2026-08-12 | Churn comes from a contract period ending, never from `buildings.status = 'lost'` | A building marked lost with no period end would keep billing forever in the reports |
 | 2026-08-12 | Deal stages, property types, loss reasons, lead sources are **tables, not Postgres enums** | Admins must rename them without a migration, and the stage names are explicitly unsettled. Enums are reserved for values the app code branches on |
-| 2026-08-12 | **Pay/bill rates live in separate tables** (`employee_compensation`, `employee_assignment_rates`) rather than as columns on employees/assignments | Ryan chose Ryan + Jon + Robert only for rate visibility. Postgres RLS filters rows, not columns, so hiding a column means moving it to its own table. Everyone can still see who works where and for how many hours |
+| 2026-08-12 | **Pay/bill rates live in separate tables** (`employee_compensation`, `employee_assignment_rates`) rather than as columns on employees/assignments | Rate visibility is Ryan, Jon and Robert Milligan only. Postgres RLS filters rows, not columns, so hiding a column means moving it to its own table. Everyone can still see who works where and for how many hours |
 | 2026-08-12 | Activities carry five nullable FKs, and a trigger stamps `account_id` from the building / opportunity / contact | A complaint logged against a building must appear on the account timeline in one indexed query, with no joins at read time |
 | 2026-08-12 | Audit triggers are on from day one, though the audit UI is Phase 6 | History cannot be backfilled. The trigger ignores `updated_at` so no-op saves don't fill the log with noise |
 | 2026-08-12 | Every importer-created row carries `import_batch_id` | Ryan will re-import several times. Undoing a bad import is one delete, not hand-cleaning the portfolio |
