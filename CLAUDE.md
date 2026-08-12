@@ -134,21 +134,23 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 0 — complete, waiting on Ryan's Supabase credentials
+**Phase:** 0 complete and signed off. Phase 1a not started.
 **Last session:** 2026-08-12
 
-**What exists:** Next.js 16 + TypeScript + Tailwind 4 scaffold. Supabase clients for
-browser and server. Login by password or magic link. Signed-out visitors are redirected
-before any content renders. The full schema is written as two migrations and verified —
-but **not yet applied to a real database**.
+**What works right now:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui. Login by
+password or magic link, verified end to end — Ryan signed in and reached the dashboard
+shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`), and
+`npm run db:check-remote` confirms against the live database that a stranger holding the
+public key can read and write nothing.
 
-**Blocked on:** Ryan creating the Supabase project and pasting the URL and keys into
-`.env.local`. Nothing else can be tested until then.
+**Accounts created:** Ryan only. The other four are pending (see Open questions).
 
-**Next action (Phase 1a):**
-1. Ryan fills in `.env.local`, then `npx supabase link` + `npx supabase db push`.
-2. Create the five users with `npm run user:create`.
-3. Confirm login works end to end, then build accounts / buildings / contacts CRUD.
+**Not set up yet:** Vercel. The app runs locally only.
+
+**Next action (Phase 1a):** accounts / buildings / contacts CRUD plus the account detail
+page with tabs. Nothing blocks this — the schema is live. When building the building form,
+remember the monthly value field must call `set_building_monthly_value()`, never write to
+`building_contract_periods` directly.
 
 ### How to work in this repo
 
