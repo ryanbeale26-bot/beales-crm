@@ -1,17 +1,17 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
 
-/** Sections that arrive in later phases. Shown greyed so the shape is visible. */
-const COMING_SOON = [
-  'Accounts',
-  'Buildings',
-  'Contacts',
-  'Opportunities',
-  'Activity',
-  'Projects',
-  'Reports',
+const NAV = [
+  { label: 'Dashboard', href: '/dashboard' },
+  { label: 'Accounts', href: '/accounts' },
+  { label: 'Buildings', href: '/buildings' },
+  { label: 'Contacts', href: '/contacts' },
 ]
+
+/** Sections that arrive in later phases. Shown greyed so the shape is visible. */
+const COMING_SOON = ['Opportunities', 'Activity', 'Projects', 'Reports']
 
 export default async function AppLayout({
   children,
@@ -56,10 +56,16 @@ export default async function AppLayout({
           </div>
         </div>
 
-        <nav className="mx-auto flex max-w-6xl gap-4 overflow-x-auto px-4 pb-2 text-sm">
-          <span className="rounded-md bg-blue-50 px-2 py-1 font-medium whitespace-nowrap text-blue-700">
-            Dashboard
-          </span>
+        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-2 text-sm">
+          {NAV.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="hover:bg-muted rounded-md px-2 py-1 font-medium whitespace-nowrap"
+            >
+              {item.label}
+            </Link>
+          ))}
           {COMING_SOON.map((item) => (
             <span
               key={item}

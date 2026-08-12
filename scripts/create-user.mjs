@@ -10,6 +10,9 @@
  *   --name      required, the name shown in the app
  *   --role      admin | leadership | field        (default: leadership)
  *   --rates     give this person access to pay rates, bill rates and margin
+ *   --inactive  create the profile but block sign-in. Use for people who have
+ *               left: their name still displays on records they used to own,
+ *               instead of the app showing a blank owner
  *   --password  set one explicitly; otherwise a strong one is generated and printed
  *
  * This is the ONLY place the service role key is used. That key bypasses all
@@ -36,6 +39,7 @@ const email = arg('email')
 const name = arg('name')
 const role = arg('role') ?? 'leadership'
 const seesRates = process.argv.includes('--rates')
+const inactive = process.argv.includes('--inactive')
 const password = arg('password') ?? randomBytes(12).toString('base64url')
 
 if (!email) fail('Missing --email')
@@ -83,7 +87,7 @@ if (error) {
 // The profile row is created by a database trigger. Set role and rate access.
 const { error: profileError } = await supabase
   .from('profiles')
-  .update({ full_name: name, email, role, sees_rates: seesRates })
+  .update({ full_name: name, email, role, sees_rates: seesRates, is_active: !inactive })
   .eq('id', userId)
 
 if (profileError) {
@@ -95,6 +99,13 @@ if (profileError) {
 
 console.log(`\n  ${created ? 'Created' : 'Updated'} ${name} <${email}>`)
 console.log(`  Role: ${role}${seesRates ? ' — can see pay rates and margin' : ''}`)
+
+if (inactive) {
+  console.log(`  Inactive: cannot sign in, and sees no data even with a session.`)
+  console.log(`  Their name still shows on records they own.\n`)
+  process.exit(0)
+}
+
 if (created) {
   console.log(`  Temporary password: ${password}`)
   console.log(`\n  Send this to them privately. They can also use the`)

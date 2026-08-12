@@ -163,7 +163,7 @@ Build the importer as a reusable admin screen — upload CSV → map columns →
 Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a working product before touching any integration.
 
 - [x] **Phase 0** — Scaffold, this file, full schema written and verified, open questions
-- [ ] **Phase 1a** — Apply migrations, create the five users, accounts / buildings / contacts CRUD, account detail page with tabs
+- [x] **Phase 1a** — Migrations applied, six profiles created, accounts / buildings / contacts CRUD, account detail page with tabs
 - [ ] **Phase 1b** — CSV importer (upload → map columns → preview → confirm). Migrate tabs 2 and 3.
 - [ ] **Phase 2** — Quick-add activity logging, timelines, activity feed with filters. Migrate tab 4. *This is the daily-habit feature — the whole project rests on it.*
 - [ ] **Phase 3** — Opportunities kanban, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report. Migrate tabs 1 and 5.
@@ -174,7 +174,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 0 complete and signed off. Phase 1a not started.
+**Phase:** 1a built and self-tested, awaiting Ryan's sign-off. Phase 1b (the importer) next.
 **Last session:** 2026-08-12
 
 **What works right now:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui. Login by
@@ -187,9 +187,24 @@ public key can read and write nothing.
 
 **Not set up yet:** Vercel. The app runs locally only.
 
-**Next action (Phase 1a):** accounts / buildings / contacts CRUD plus the account detail
-page with tabs. Nothing blocks this — the schema is live. When building the building form,
-remember the monthly value field must call `set_building_monthly_value()`, never write to
+**What Phase 1a shipped:** accounts list (with MRR roll-up) and detail page with five tabs;
+buildings list, detail with contract-value history, and form; contacts list, detail, and the
+contact↔building link. TypeScript types are generated from the live database into
+`src/lib/database.types.ts` — regenerate with `npx supabase gen types typescript --linked`
+after any migration.
+
+Tested end to end through the browser against the real database: created an account, a
+building at $5,000/mo, raised it to $6,500 from a later date, and confirmed the old period
+closed and a new one opened. All test records and the temporary QA login were deleted
+afterwards; the database currently holds six profiles and no business data.
+
+**Next action (Phase 1b):** the CSV/Excel importer — upload, map columns, preview, confirm.
+It must derive accounts by splitting `Client Name` on the em-dash, parse `Service Scope`
+for address and square footage, skip the `TOTAL ACTIVE ARR` row, and let Ryan merge
+proposed account groupings by hand before anything is written. Every row it creates carries
+`import_batch_id` so a bad run is one delete.
+
+The building form's monthly value calls `set_building_monthly_value()`; never write to
 `building_contract_periods` directly.
 
 ### How to work in this repo
@@ -203,6 +218,16 @@ remember the monthly value field must call `set_building_monthly_value()`, never
 | `npx supabase db push` | Applies migrations to the real Supabase project |
 
 Note: `next dev` appends an auto-generated block to the bottom of this file. Leave it committed.
+
+### Gotchas already paid for
+
+**Naming a foreign key in a PostgREST embed.** `contacts` and `accounts` are joined *twice* — `contacts.account_id` and `accounts.primary_contact_id` — so `select('*, account:accounts(...)')` fails with "more than one relationship was found". Write `accounts!contacts_account_id_fkey(...)`. The same applies wherever two tables have two FKs (buildings↔profiles via `owner_id` and `secondary_owner_id`).
+
+**Query errors must not become 404s.** Detail pages check `error` separately from a missing row and throw, because the ambiguous-embed bug above showed up as a bare "page not found" and cost real time. There is an `error.tsx` boundary that prints the message.
+
+**A user cannot be hard-deleted once they have changed anything.** `audit_log.changed_by` references `profiles`, deliberately — deleting the person would erase who did what. **Deactivate instead**: `npm run user:create -- --email … --name … --inactive`. That blocks sign-in and hides all data from them, while their name still shows on records they owned.
+
+**This project lives in `~/Desktop`, which is synced to iCloud Drive.** iCloud created conflict copies (`routes.d 2.ts`) inside `.next/`, which broke `tsc` with duplicate-identifier errors. Fix is `rm -rf .next`. Worth moving the project somewhere outside Desktop/Documents — iCloud should not be syncing `node_modules` and build output.
 
 ---
 
