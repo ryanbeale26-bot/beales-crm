@@ -57,7 +57,7 @@ create table profiles (
 );
 
 comment on column profiles.sees_rates is
-  'Controls access to employee pay rates, bill rates and labour margin. Set for Ryan, Jon and Robert Milligan.';
+  'Controls access to employee pay rates, bill rates and labour margin.';
 
 -- A profile row is created automatically whenever an admin invites a user.
 create function public.handle_new_user()

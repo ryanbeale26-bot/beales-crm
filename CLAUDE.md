@@ -21,17 +21,21 @@ The four jobs it must do:
 
 Five people, invite-only, no public signup. All five see all data.
 
-| Name | Role | Sees pay rates | Notes |
-|---|---|---|---|
-| Ryan Beale | Admin | **Yes** | Managing Director, the developer of this app |
-| Jon Beale | Leadership | **Yes** | Owner/President, Ryan's father |
-| Robert Milligan | Leadership | **Yes** | Mil**li**gan |
-| Bob Mulligan | Leadership | No | Mul**li**gan. **Distinct person from Robert Milligan — do not dedupe** |
-| Victor Melo | Leadership / field | No | Site supervisor |
+| Name | Title | App role | Email | Sees pay rates |
+|---|---|---|---|---|
+| Ryan Beale | Managing Director | Admin | ryan@bealesllc.com | **Yes** |
+| Jon Beale | President, Owner | Leadership | jbeale@bealesllc.com | **Yes** |
+| Robert Mulligan | Managing Director | Leadership | rmulligan@bealesllc.com | **Yes** |
+| Bob Mulligan | Vice President, Owner | Leadership | bmulligan@bealesllc.com | No |
+| Victor Melo | Area Manager | Leadership / field | vmelo@bealesllc.com | No |
 
 Non-admins have full read/write on accounts, buildings, contacts, activities, opportunities, projects, and employees. Admins additionally manage users, reference data, and imports.
 
-**On the two similar names.** Robert Mil**li**gan and Bob Mul**li**gan are different people, and the surnames differ by one letter. Ryan has referred to "Robert Mulligan" in conversation and the original spec used both spellings in different places, so do not infer which person is meant — ask. Rate access belongs to **Robert Milligan**, confirmed 2026-08-12; Bob Mulligan does **not** have it.
+**On the two Mulligans.** Robert Mulligan and Bob Mulligan are **different people**, both surnamed Mulligan — do not dedupe them, and do not assume "Bob" is short for this Robert. Tell them apart by email: `rmulligan@` is Robert, `bmulligan@` is Bob.
+
+The original spec spelled Robert's surname "Milligan", which is wrong — there is no Milligan at the company. Corrected 2026-08-12. If you find "Milligan" anywhere in this repo, it means Robert Mulligan.
+
+Rate access belongs to **Robert Mulligan (`rmulligan@`)**. Bob Mulligan does **not** have it, despite being an owner — Ryan's explicit choice.
 
 ## Who Ryan is, and how to work with him
 
@@ -173,10 +177,12 @@ Note: `next dev` appends an auto-generated block to the bottom of this file. Lea
 ## Open questions
 
 **Blocking Phase 1a:**
-- [x] ~~Confirm the third person with pay-rate access~~ — **Robert Milligan**, confirmed 2026-08-12.
+- [x] ~~Confirm the third person with pay-rate access~~ — **Robert Mulligan** (`rmulligan@`), confirmed 2026-08-12.
 - [x] ~~Supabase project~~ — `beales-crm` / `pjcitahktwnawucoznhk`, migrations applied, `.env.local` filled in.
 - [x] ~~Private GitHub repo~~ — created.
-- [ ] Login email addresses **and full legal names** for Jon Beale, Robert Milligan, Bob Mulligan and Victor Melo. Ryan is set up already (`ryan@bealesllc.com`). Legal names matter later: the payroll email parser has to match Paychex records, which use legal names, not "Bob".
+- [x] ~~Login email addresses for the other four~~ — captured in the roster above.
+- [ ] Confirm Victor Melo's address. Ryan wrote `vmelo@beales..com`, which is a typo; assumed `vmelo@bealesllc.com`.
+- [ ] Bob Mulligan's legal first name, for the Phase 7 payroll parser — Paychex will say "Robert" or similar where the team says "Bob", and there is already another Robert Mulligan to tell him apart from.
 - [ ] Vercel project — not set up yet.
 
 **Blocking Phase 1b (the import):**
@@ -207,7 +213,7 @@ Note: `next dev` appends an auto-generated block to the bottom of this file. Lea
 | 2026-08-12 | **Contract value is a history table, not a column.** `building_contract_periods` holds effective/end dates per value; `buildings` has no monthly value at all. The UI still shows one "Monthly value" field and calls `set_building_monthly_value()` behind it | A single column cannot answer "what was MRR in March", which makes the revenue growth waterfall (new / expansion / contraction / churn) unbuildable. Ryan has only today's values, so history starts at go-live and accrues forward |
 | 2026-08-12 | Churn comes from a contract period ending, never from `buildings.status = 'lost'` | A building marked lost with no period end would keep billing forever in the reports |
 | 2026-08-12 | Deal stages, property types, loss reasons, lead sources are **tables, not Postgres enums** | Admins must rename them without a migration, and the stage names are explicitly unsettled. Enums are reserved for values the app code branches on |
-| 2026-08-12 | **Pay/bill rates live in separate tables** (`employee_compensation`, `employee_assignment_rates`) rather than as columns on employees/assignments | Rate visibility is Ryan, Jon and Robert Milligan only. Postgres RLS filters rows, not columns, so hiding a column means moving it to its own table. Everyone can still see who works where and for how many hours |
+| 2026-08-12 | **Pay/bill rates live in separate tables** (`employee_compensation`, `employee_assignment_rates`) rather than as columns on employees/assignments | Rate visibility is Ryan, Jon and Robert Mulligan only. Postgres RLS filters rows, not columns, so hiding a column means moving it to its own table. Everyone can still see who works where and for how many hours |
 | 2026-08-12 | Activities carry five nullable FKs, and a trigger stamps `account_id` from the building / opportunity / contact | A complaint logged against a building must appear on the account timeline in one indexed query, with no joins at read time |
 | 2026-08-12 | Audit triggers are on from day one, though the audit UI is Phase 6 | History cannot be backfilled. The trigger ignores `updated_at` so no-op saves don't fill the log with noise |
 | 2026-08-12 | Every importer-created row carries `import_batch_id` | Ryan will re-import several times. Undoing a bad import is one delete, not hand-cleaning the portfolio |
