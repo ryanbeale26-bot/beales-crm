@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { ActivityTimeline } from '@/components/activity-timeline'
+
 import {
   EmptyState,
   PageHeader,
@@ -230,12 +232,7 @@ export default async function AccountPage({
           </EmptyState>
         ))}
 
-      {tab === 'Activity' && (
-        <EmptyState title="Activity logging arrives in Phase 2.">
-          Calls, site visits and complaints will appear here, newest first — including anything
-          logged against this account&rsquo;s buildings.
-        </EmptyState>
-      )}
+      {tab === 'Activity' && <ActivityTimeline scope={{ accountId: id }} />}
 
       {tab === 'Opportunities' && (
         <EmptyState title="The pipeline arrives in Phase 3.">

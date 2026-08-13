@@ -169,7 +169,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 0** — Scaffold, this file, full schema written and verified, open questions
 - [x] **Phase 1a** — Migrations applied, six profiles created, accounts / buildings / contacts CRUD, account detail page with tabs
 - [x] **Phase 1b** — Importer built (upload → map columns → preview → confirm → undo). Tabs 2 and 3 supported; **not yet run for real**
-- [ ] **Phase 2** — Quick-add activity logging, timelines, activity feed with filters. Migrate tab 4. *This is the daily-habit feature — the whole project rests on it.*
+- [x] **Phase 2** — Quick-add logging, timelines, activity feed with filters, activity importer. Tab 4 **not yet imported for real**
 - [ ] **Phase 3** — Opportunities kanban, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report. Migrate tabs 1 and 5.
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects
 - [ ] **Phase 5** — Revenue views in Postgres, dashboard (mirror tab 0 first), six reports with CSV export
@@ -178,7 +178,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 1b built and self-tested end to end. Ryan has not yet run the real import.
+**Phase:** 2 built and self-tested. Ryan has imported tabs 2 and 3 for real (22 accounts, 38 buildings, 97 contacts). Tab 4 is ready but not yet imported.
 **Last session:** 2026-08-12
 
 **What works right now:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui. Login by

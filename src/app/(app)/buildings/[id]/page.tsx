@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { assignEmployee, endAssignment } from '@/app/(app)/actions'
+import { ActivityTimeline } from '@/components/activity-timeline'
 import { Select } from '@/components/form-field'
 import { EmptyState, PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -326,6 +327,9 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
               </ul>
             </details>
           )}
+
+          <SectionTitle>Activity</SectionTitle>
+          <ActivityTimeline scope={{ buildingId: id }} limit={15} />
 
           <SectionTitle>Contacts at this building</SectionTitle>
           {links && links.length > 0 ? (

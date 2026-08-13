@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 
 import {
   commitActiveClients,
+  commitActivities,
   commitContacts,
   parseUpload,
   previewImport,
@@ -18,6 +19,7 @@ import { SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { IMPORTERS, type ImporterKey } from '@/lib/import/definitions'
+import type { ProposedActivity } from '@/lib/import/activities'
 import type { ProposedBuilding, ProposedContact, SkippedRow } from '@/lib/import/active-clients'
 import { money } from '@/lib/format'
 
@@ -40,6 +42,7 @@ export function Importer() {
 
   const [buildings, setBuildings] = useState<ProposedBuilding[]>([])
   const [contacts, setContacts] = useState<ProposedContact[]>([])
+  const [activities, setActivities] = useState<ProposedActivity[]>([])
   const [skipped, setSkipped] = useState<SkippedRow[]>([])
   const [result, setResult] = useState<CommitResult | null>(null)
 
@@ -79,13 +82,9 @@ export function Importer() {
     setBusy(false)
 
     if (!res.ok) return setError(res.error)
-    if (res.kind === 'active-clients') {
-      setBuildings(res.buildings)
-      setContacts([])
-    } else {
-      setContacts(res.contacts)
-      setBuildings([])
-    }
+    setBuildings(res.kind === 'active-clients' ? res.buildings : [])
+    setContacts(res.kind === 'contacts' ? res.contacts : [])
+    setActivities(res.kind === 'activities' ? res.activities : [])
     setSkipped(res.skipped)
     setStep('preview')
   }
@@ -96,7 +95,9 @@ export function Importer() {
     const res =
       importerKey === 'active-clients'
         ? await commitActiveClients({ fileName, sheetName, mapping, buildings })
-        : await commitContacts({ fileName, sheetName, mapping, contacts })
+        : importerKey === 'activities'
+          ? await commitActivities({ fileName, sheetName, mapping, activities })
+          : await commitContacts({ fileName, sheetName, mapping, contacts })
     setBusy(false)
 
     if (!res.ok) return setError(res.error)
@@ -371,6 +372,79 @@ export function Importer() {
         </div>
       )}
 
+      {step === 'preview' && importerKey === 'activities' && (
+        <div className="space-y-6">
+          <div className="bg-muted rounded-[3px] p-3 text-sm">
+            <strong>{activities.length} activities</strong> ·{' '}
+            {activities.filter((a) => a.accountId).length} matched to an account ·{' '}
+            {activities.filter((a) => !a.typeMatched).length} filed as a Note because the type
+            did not match · {skipped.length} {skipped.length === 1 ? 'row' : 'rows'} skipped
+          </div>
+
+          <div>
+            <SectionTitle>How the types were mapped</SectionTitle>
+            <div className="border-border border-t text-sm">
+              {typeCounts(activities).map(([name, count]) => (
+                <div key={name} className="border-border flex justify-between border-b px-2 py-1.5">
+                  <span>{name}</span>
+                  <span className="text-muted-foreground">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <SectionTitle>First 50 rows</SectionTitle>
+            <div className="border-border overflow-x-auto border-t">
+              <table className="w-full text-sm">
+                <thead className="text-muted-foreground">
+                  <tr className="border-border border-b">
+                    <th className="px-2 py-1.5 text-left font-normal">Row</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Date</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Type</th>
+                    <th className="px-2 py-1.5 text-left font-normal">What happened</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Account</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activities.slice(0, 50).map((a) => (
+                    <tr key={a.rowNumber} className="border-border border-b align-top">
+                      <td className="text-muted-foreground px-2 py-1.5">{a.rowNumber}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">{a.occurredAt ?? '—'}</td>
+                      <td className="px-2 py-1.5">
+                        {a.typeName}
+                        {!a.typeMatched && a.rawType && (
+                          <div className="text-muted-foreground text-xs">was: {a.rawType}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">{a.subject.slice(0, 90)}</td>
+                      <td className="px-2 py-1.5">
+                        {a.accountName ?? (
+                          <span className="text-muted-foreground">
+                            {a.companyName ? `no match: ${a.companyName.slice(0, 40)}` : '—'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {activities.length > 50 && (
+              <p className="text-muted-foreground mt-2 text-sm">
+                Showing 50 of {activities.length}. All of them will be imported.
+              </p>
+            )}
+          </div>
+
+          {skipped.length > 0 && <SkippedList skipped={skipped} />}
+
+          <CommitBar busy={busy} onCommit={handleCommit} onBack={() => setStep('map')}>
+            Import {activities.length} activities
+          </CommitBar>
+        </div>
+      )}
+
       {step === 'done' && result?.ok && (
         <div className="space-y-4">
           <div className="bg-secondary rounded-[3px] p-4">
@@ -381,6 +455,9 @@ export function Importer() {
                 <li>{result.accountsReused} rows joined an account that already existed</li>
               )}
               {result.buildingsCreated > 0 && <li>{result.buildingsCreated} buildings created</li>}
+              {result.activitiesCreated > 0 && (
+                <li>{result.activitiesCreated} activities imported</li>
+              )}
               {result.contactsCreated > 0 && <li>{result.contactsCreated} contacts created</li>}
               {result.contactsReused > 0 && (
                 <li>{result.contactsReused} contacts already existed and were left alone</li>
@@ -472,6 +549,12 @@ function Steps({ current }: { current: Step }) {
       ))}
     </ol>
   )
+}
+
+function typeCounts(activities: ProposedActivity[]): [string, number][] {
+  const counts = new Map<string, number>()
+  for (const a of activities) counts.set(a.typeName, (counts.get(a.typeName) ?? 0) + 1)
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): [string, T[]][] {

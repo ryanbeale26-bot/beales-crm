@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 
+import { QuickAdd, type ActivityType } from '@/components/quick-add'
 import { cn } from '@/lib/utils'
 
 const NAV = [
@@ -13,18 +14,21 @@ const NAV = [
   { label: 'Buildings', href: '/buildings', icon: '▤' },
   { label: 'Contacts', href: '/contacts', icon: '☺' },
   { label: 'Employees', href: '/employees', icon: '⚑' },
+  { label: 'Activity', href: '/activity', icon: '≡' },
   { label: 'Import', href: '/admin/import', icon: '↥' },
 ]
 
-const LATER = ['Opportunities', 'Activity', 'Projects', 'Reports']
+const LATER = ['Opportunities', 'Projects', 'Reports']
 
 export function AppShell({
   displayName,
   initial,
+  activityTypes,
   children,
 }: {
   displayName: string
   initial: string
+  activityTypes: ActivityType[]
   children: React.ReactNode
 }) {
   const pathname = usePathname()
@@ -140,6 +144,10 @@ export function AppShell({
 
         <main className="mx-auto w-full max-w-4xl flex-1 px-6 pt-2 pb-24 md:px-12">{children}</main>
       </div>
+
+      {/* On every screen, because the moment you have to navigate somewhere to
+          log a call is the moment nobody logs the call. */}
+      <QuickAdd activityTypes={activityTypes} />
     </div>
   )
 }

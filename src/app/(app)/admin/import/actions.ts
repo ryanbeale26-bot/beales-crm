@@ -9,6 +9,7 @@ import {
   type ProposedContact,
   type SkippedRow,
 } from '@/lib/import/active-clients'
+import { buildActivitiesProposal, type ProposedActivity } from '@/lib/import/activities'
 import { IMPORTERS, guessMapping, type ImporterKey } from '@/lib/import/definitions'
 import type { Json } from '@/lib/database.types'
 import { readWorkbook } from '@/lib/import/workbook'
@@ -95,6 +96,7 @@ export type PreviewResult =
       skipped: SkippedRow[]
     }
   | { ok: true; kind: 'contacts'; contacts: ProposedContact[]; skipped: SkippedRow[] }
+  | { ok: true; kind: 'activities'; activities: ProposedActivity[]; skipped: SkippedRow[] }
 
 /**
  * Step 2 → 3. The file is re-read rather than held in memory between steps:
@@ -128,6 +130,20 @@ export async function previewImport(formData: FormData): Promise<PreviewResult> 
     return { ok: true, kind: 'active-clients', buildings, skipped }
   }
 
+  if (importerKey === 'activities') {
+    // Matching happens here, not at commit, so the preview shows exactly which
+    // account and building each row will land on.
+    const [{ data: accounts }, { data: buildings }] = await Promise.all([
+      supabase.from('accounts').select('id, name').is('deleted_at', null),
+      supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
+    ])
+    const { activities, skipped } = buildActivitiesProposal(sheet.rows, sheet.rowNumbers, mapping, {
+      accounts: accounts ?? [],
+      buildings: buildings ?? [],
+    })
+    return { ok: true, kind: 'activities', activities, skipped }
+  }
+
   const { contacts, skipped } = buildContactsProposal(sheet.rows, sheet.rowNumbers, mapping)
   return { ok: true, kind: 'contacts', contacts, skipped }
 }
@@ -140,6 +156,7 @@ export type CommitResult =
       accountsCreated: number
       accountsReused: number
       buildingsCreated: number
+      activitiesCreated: number
       contactsCreated: number
       contactsReused: number
       errors: number
@@ -344,6 +361,7 @@ export async function commitActiveClients(payload: {
     accountsCreated,
     accountsReused,
     buildingsCreated,
+    activitiesCreated: 0,
     contactsCreated,
     contactsReused,
     errors: rowErrors.length,
@@ -451,8 +469,130 @@ export async function commitContacts(payload: {
     accountsCreated: 0,
     accountsReused: 0,
     buildingsCreated: 0,
+    activitiesCreated: 0,
     contactsCreated,
     contactsReused,
+    errors: rowErrors.length,
+  }
+}
+
+export async function commitActivities(payload: {
+  fileName: string
+  sheetName: string
+  mapping: Record<string, number>
+  activities: ProposedActivity[]
+}): Promise<CommitResult> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can import data.' }
+
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .insert({
+      source_tab: `${payload.fileName} · ${payload.sheetName}`,
+      file_name: payload.fileName,
+      mapping: payload.mapping,
+      row_count: payload.activities.length,
+      status: 'draft',
+      imported_by: userId,
+    })
+    .select('id')
+    .single()
+
+  if (batchError || !batch) {
+    return { ok: false, error: `Could not start the import: ${batchError?.message}` }
+  }
+
+  const batchId = batch.id
+  let created = 0
+  const rowErrors: { batch_id: string; row_number: number; raw_row: Json; error: string }[] = []
+
+  const [{ data: types }, { data: people }] = await Promise.all([
+    supabase.from('activity_types').select('id, name'),
+    supabase.from('profiles').select('id, full_name'),
+  ])
+
+  const typeByName = new Map((types ?? []).map((t) => [t.name.toLowerCase(), t.id]))
+  const noteTypeId = typeByName.get('note')
+
+  const rows = payload.activities.map((a) => {
+    const typeId = typeByName.get(a.typeName.toLowerCase()) ?? noteTypeId
+    // "Ryan / Robert" logged it — the first name listed is who it is filed under.
+    const firstName = a.ownerName?.split(/[/&,]/)[0]?.trim().toLowerCase()
+    const loggedBy =
+      (firstName && people?.find((p) => p.full_name.toLowerCase().startsWith(firstName))?.id) ||
+      userId
+
+    return {
+      activity_type_id: typeId!,
+      subject: a.subject,
+      body: a.body,
+      occurred_at: a.occurredAt ? new Date(a.occurredAt).toISOString() : new Date().toISOString(),
+      logged_by: loggedBy,
+      // Resolved during preview, so what was shown is what gets written.
+      account_id: a.accountId,
+      building_id: a.buildingId,
+      source: a.source as 'manual',
+      import_batch_id: batchId,
+      rowNumber: a.rowNumber,
+    }
+  })
+
+  // 670 rows one at a time is slow and hammers the connection; insert in
+  // chunks and fall back to per-row only for a chunk that fails.
+  for (let i = 0; i < rows.length; i += 100) {
+    const chunk = rows.slice(i, i + 100)
+    // rowNumber is carried alongside for error reporting; strip it before insert.
+    const payloadRows = chunk.map((row) => {
+      const rest = { ...row } as Partial<typeof row>
+      delete rest.rowNumber
+      return rest as Omit<typeof row, 'rowNumber'>
+    })
+    const { error } = await supabase.from('activities').insert(payloadRows)
+
+    if (!error) {
+      created += chunk.length
+      continue
+    }
+
+    for (const row of chunk) {
+      const rowNumber = row.rowNumber
+      const rest = { ...row } as Partial<typeof row>
+      delete rest.rowNumber
+      const { error: rowError } = await supabase
+        .from('activities')
+        .insert(rest as Omit<typeof row, 'rowNumber'>)
+      if (rowError) {
+        rowErrors.push({
+          batch_id: batchId,
+          row_number: rowNumber,
+          raw_row: JSON.parse(JSON.stringify(rest)) as Json,
+          error: rowError.message,
+        })
+      } else {
+        created++
+      }
+    }
+  }
+
+  if (rowErrors.length > 0) await supabase.from('import_row_errors').insert(rowErrors)
+
+  await supabase
+    .from('import_batches')
+    .update({ status: 'committed', committed_at: new Date().toISOString(), row_count: created })
+    .eq('id', batchId)
+
+  revalidatePath('/activity')
+  revalidatePath('/admin/import')
+
+  return {
+    ok: true,
+    batchId,
+    accountsCreated: 0,
+    accountsReused: 0,
+    buildingsCreated: 0,
+    activitiesCreated: created,
+    contactsCreated: 0,
+    contactsReused: 0,
     errors: rowErrors.length,
   }
 }
@@ -467,6 +607,7 @@ export async function rollbackImport(batchId: string): Promise<{ ok: boolean; er
 
   // Order matters: buildings reference accounts, and contract periods and
   // contact links cascade from the building.
+  await supabase.from('activities').delete().eq('import_batch_id', batchId)
   await supabase.from('buildings').delete().eq('import_batch_id', batchId)
   await supabase.from('contacts').delete().eq('import_batch_id', batchId)
   const { error } = await supabase.from('accounts').delete().eq('import_batch_id', batchId)

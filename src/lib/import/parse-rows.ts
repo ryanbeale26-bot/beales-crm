@@ -7,6 +7,8 @@
  * original text is always kept in the notes.
  */
 
+export type SkippedRowLike = { rowNumber: number; reason: string; raw: string | null }
+
 export type ParsedName = { accountName: string; buildingName: string; warning?: string }
 
 /** Em-dash, en-dash, or a spaced hyphen — Ryan's sheet uses all three. */

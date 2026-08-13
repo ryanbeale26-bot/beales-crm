@@ -24,8 +24,18 @@ export default async function AppLayout({
 
   const displayName = profile?.full_name || user.email || 'Signed in'
 
+  const { data: activityTypes } = await supabase
+    .from('activity_types')
+    .select('id, name')
+    .eq('is_active', true)
+    .order('sort_order')
+
   return (
-    <AppShell displayName={displayName} initial={displayName.charAt(0).toUpperCase()}>
+    <AppShell
+      displayName={displayName}
+      initial={displayName.charAt(0).toUpperCase()}
+      activityTypes={activityTypes ?? []}
+    >
       {children}
     </AppShell>
   )

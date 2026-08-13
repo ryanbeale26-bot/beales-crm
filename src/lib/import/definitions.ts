@@ -12,7 +12,7 @@ export type FieldDef = {
   match: string[]
 }
 
-export type ImporterKey = 'active-clients' | 'contacts'
+export type ImporterKey = 'active-clients' | 'contacts' | 'activities'
 
 export type ImporterDef = {
   key: ImporterKey
@@ -49,6 +49,24 @@ export const IMPORTERS: Record<ImporterKey, ImporterDef> = {
       { key: 'notes', label: 'Notes', match: ['notes'] },
       { key: 'openIssues', label: 'Open issues', hint: 'Appended to the building notes', match: ['open issues', 'issues'] },
       { key: 'inspectqaId', label: 'Inspection system ID', match: ['cleansmarts', 'inspectqa', 'site id'] },
+    ],
+  },
+  activities: {
+    key: 'activities',
+    label: 'Activity Log → activities',
+    description:
+      'One row per thing that happened. The free-text type column is mapped down to the short list, and anything that does not match is filed as a Note rather than guessed at.',
+    sheetHint: 'activity log',
+    fields: [
+      { key: 'date', label: 'Date', match: ['date'] },
+      { key: 'summary', label: 'Summary', hint: 'Becomes the subject', match: ['summary', 'description'] },
+      { key: 'activityType', label: 'Activity type', match: ['activity type', 'type'] },
+      { key: 'company', label: 'Company', hint: 'Matched against existing accounts', match: ['company', 'client'] },
+      { key: 'contact', label: 'Contact', match: ['contact'] },
+      { key: 'source', label: 'Source', match: ['source'] },
+      { key: 'outcome', label: 'Outcome', hint: 'Kept in the notes', match: ['outcome'] },
+      { key: 'nextStep', label: 'Next step', hint: 'Kept in the notes', match: ['next step', 'next action'] },
+      { key: 'owner', label: 'Owner', match: ['owner'] },
     ],
   },
   contacts: {

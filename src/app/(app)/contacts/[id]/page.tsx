@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { linkContactToBuilding, unlinkContactFromBuilding } from '@/app/(app)/actions'
+import { ActivityTimeline } from '@/components/activity-timeline'
 import { Select } from '@/components/form-field'
 import { PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -107,6 +108,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
         </section>
 
         <section>
+          <SectionTitle>Activity</SectionTitle>
+          <ActivityTimeline scope={{ contactId: id }} limit={15} />
+
           <SectionTitle>Buildings</SectionTitle>
           <p className="text-muted-foreground mb-3 text-xs">
             A portfolio manager can cover several sites.
