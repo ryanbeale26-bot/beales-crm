@@ -69,6 +69,10 @@ Rules:
 
 ## Architecture decisions already made
 
+**0. Contracted hours vs. scheduled hours.** A building records what the *contract* calls for — day porter hours/day, night hours/night, days per week for each, and a weekend total. `v_building_hours` turns that into weekly / monthly / annual hours. Separately, `employee_assignments` records who actually covers it and for how many hours. The building page shows both side by side, because the gap between them is the thing worth seeing. Monthly hours are annual ÷ 12, never weekly × 4.
+
+Weekend hours are stored as a **weekly total**, not per weekend day — the field is labelled that way to kill the ambiguity.
+
 **1. Account vs. Building split.** An *account* is a customer relationship; a *building* is a serviced site. One account, many buildings. Contract value, square footage, scope, staffing, pay rates, and bill rates all live on the **building** and roll up to the account. This lets Beale's lose one building in a portfolio without losing the account, and makes revenue reporting correct.
 
 **2. Separate Supabase project from InspectQA.** InspectQA is live in client environments — South Shore Health and Dana-Farber — and is being prepared as a standalone SaaS spinout. CRM migrations must not be able to touch it, and its schema must stay cleanly separable for technical diligence. The CRM reads InspectQA across the project boundary via a read-only role and mirrors the data locally.
@@ -197,6 +201,19 @@ Tested end to end through the browser against the real database: created an acco
 building at $5,000/mo, raised it to $6,500 from a later date, and confirmed the old period
 closed and a new one opened. All test records and the temporary QA login were deleted
 afterwards; the database currently holds six profiles and no business data.
+
+**Added after Phase 1a, at Ryan's request:** service types per building (Janitorial /
+Maintenance / HVAC / Security, multi-select via `building_services`, because sites are often
+two of them); contracted hours with weekly / monthly / annual totals from `v_building_hours`;
+and employees assigned to buildings with a designation (`employee_assignments.role` —
+day porter, night cleaner, lead cleaner, supervisor). There is now an Employees screen, and
+an employee can be created and assigned in one step from a building page.
+
+Ending an assignment sets `end_date` rather than deleting the row — an assignment that ended
+plus one that began is exactly how the staff-movement report detects a move.
+
+**Data note:** Ryan created `Fox Rock Properties` and its building `91 Longwater Drive`
+by hand on 2026-08-12. They are real. Any cleanup script must not delete them.
 
 **Next action (Phase 1b):** the CSV/Excel importer — upload, map columns, preview, confirm.
 It must derive accounts by splitting `Client Name` on the em-dash, parse `Service Scope`

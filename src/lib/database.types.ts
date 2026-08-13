@@ -220,6 +220,13 @@ export type Database = {
             foreignKeyName: "activities_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "activities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -384,6 +391,13 @@ export type Database = {
             foreignKeyName: "attachments_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "attachments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -503,6 +517,13 @@ export type Database = {
             foreignKeyName: "building_contract_periods_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "building_contract_periods_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -563,6 +584,13 @@ export type Database = {
             foreignKeyName: "building_services_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "building_services_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -584,6 +612,9 @@ export type Database = {
           contract_end_date: string | null
           contract_start_date: string | null
           created_at: string
+          day_porter: boolean
+          day_porter_days_per_week: number | null
+          day_porter_hours_per_day: number | null
           deleted_at: string | null
           entity: Database["public"]["Enums"]["operating_entity"]
           floors: number | null
@@ -595,17 +626,19 @@ export type Database = {
           lost_date: string | null
           lost_to_competitor_id: string | null
           name: string
+          night_days_per_week: number | null
+          night_hours_per_night: number | null
           owner_id: string | null
           postal_code: string | null
           property_type_id: string | null
           scope_notes: string | null
           secondary_owner_id: string | null
-          service_days: boolean
-          service_nights: boolean
           square_footage: number | null
           state: string | null
           status: Database["public"]["Enums"]["building_status"]
           updated_at: string
+          weekend_hours_per_week: number | null
+          weekend_service: boolean
         }
         Insert: {
           account_id: string
@@ -615,6 +648,9 @@ export type Database = {
           contract_end_date?: string | null
           contract_start_date?: string | null
           created_at?: string
+          day_porter?: boolean
+          day_porter_days_per_week?: number | null
+          day_porter_hours_per_day?: number | null
           deleted_at?: string | null
           entity?: Database["public"]["Enums"]["operating_entity"]
           floors?: number | null
@@ -626,17 +662,19 @@ export type Database = {
           lost_date?: string | null
           lost_to_competitor_id?: string | null
           name: string
+          night_days_per_week?: number | null
+          night_hours_per_night?: number | null
           owner_id?: string | null
           postal_code?: string | null
           property_type_id?: string | null
           scope_notes?: string | null
           secondary_owner_id?: string | null
-          service_days?: boolean
-          service_nights?: boolean
           square_footage?: number | null
           state?: string | null
           status?: Database["public"]["Enums"]["building_status"]
           updated_at?: string
+          weekend_hours_per_week?: number | null
+          weekend_service?: boolean
         }
         Update: {
           account_id?: string
@@ -646,6 +684,9 @@ export type Database = {
           contract_end_date?: string | null
           contract_start_date?: string | null
           created_at?: string
+          day_porter?: boolean
+          day_porter_days_per_week?: number | null
+          day_porter_hours_per_day?: number | null
           deleted_at?: string | null
           entity?: Database["public"]["Enums"]["operating_entity"]
           floors?: number | null
@@ -657,17 +698,19 @@ export type Database = {
           lost_date?: string | null
           lost_to_competitor_id?: string | null
           name?: string
+          night_days_per_week?: number | null
+          night_hours_per_night?: number | null
           owner_id?: string | null
           postal_code?: string | null
           property_type_id?: string | null
           scope_notes?: string | null
           secondary_owner_id?: string | null
-          service_days?: boolean
-          service_nights?: boolean
           square_footage?: number | null
           state?: string | null
           status?: Database["public"]["Enums"]["building_status"]
           updated_at?: string
+          weekend_hours_per_week?: number | null
+          weekend_service?: boolean
         }
         Relationships: [
           {
@@ -781,6 +824,13 @@ export type Database = {
             columns: ["building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "contact_buildings_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -935,6 +985,7 @@ export type Database = {
           end_reason: string | null
           id: string
           import_batch_id: string | null
+          role: Database["public"]["Enums"]["assignment_role"] | null
           scheduled_hours_per_week: number | null
           shift: string | null
           start_date: string
@@ -948,6 +999,7 @@ export type Database = {
           end_reason?: string | null
           id?: string
           import_batch_id?: string | null
+          role?: Database["public"]["Enums"]["assignment_role"] | null
           scheduled_hours_per_week?: number | null
           shift?: string | null
           start_date: string
@@ -961,6 +1013,7 @@ export type Database = {
           end_reason?: string | null
           id?: string
           import_batch_id?: string | null
+          role?: Database["public"]["Enums"]["assignment_role"] | null
           scheduled_hours_per_week?: number | null
           shift?: string | null
           start_date?: string
@@ -979,6 +1032,13 @@ export type Database = {
             columns: ["building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -1274,6 +1334,13 @@ export type Database = {
             foreignKeyName: "inspections_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "inspections_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -1317,6 +1384,13 @@ export type Database = {
             columns: ["building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "inspectqa_site_map_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -1501,6 +1575,13 @@ export type Database = {
             columns: ["building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "opportunities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -1823,6 +1904,13 @@ export type Database = {
             foreignKeyName: "projects_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "projects_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -1934,6 +2022,13 @@ export type Database = {
             columns: ["building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "staffing_report_lines_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -2076,6 +2171,13 @@ export type Database = {
             foreignKeyName: "work_orders_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "work_orders_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -2101,6 +2203,45 @@ export type Database = {
           entity: Database["public"]["Enums"]["operating_entity"] | null
           monthly_value: number | null
           status: Database["public"]["Enums"]["building_status"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+        ]
+      }
+      v_building_hours: {
+        Row: {
+          account_id: string | null
+          annual_hours: number | null
+          building_id: string | null
+          monthly_hours: number | null
+          weekly_hours: number | null
+        }
+        Insert: {
+          account_id?: string | null
+          annual_hours?: never
+          building_id?: string | null
+          monthly_hours?: never
+          weekly_hours?: never
+        }
+        Update: {
+          account_id?: string | null
+          annual_hours?: never
+          building_id?: string | null
+          monthly_hours?: never
+          weekly_hours?: never
         }
         Relationships: [
           {
@@ -2161,6 +2302,13 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["building_id"]
             isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
@@ -2196,6 +2344,46 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "property_types"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_building_scheduled_hours: {
+        Row: {
+          building_id: string | null
+          day_porters: number | null
+          lead_cleaners: number | null
+          night_cleaners: number | null
+          scheduled_weekly_hours: number | null
+          staff_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_mrr_by_month"
+            referencedColumns: ["building_id"]
           },
         ]
       }
@@ -2249,6 +2437,20 @@ export type Database = {
             columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["to_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["from_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
             referencedColumns: ["building_id"]
           },
           {
@@ -2339,6 +2541,12 @@ export type Database = {
         | "cowork"
         | "phone"
         | "system"
+      assignment_role:
+        | "day_porter"
+        | "night_cleaner"
+        | "lead_cleaner"
+        | "supervisor"
+        | "other"
       attachment_kind: "before" | "after" | "document" | "photo"
       audit_action: "insert" | "update" | "delete"
       building_status: "pending" | "active" | "lost"
@@ -2506,6 +2714,13 @@ export const Constants = {
         "cowork",
         "phone",
         "system",
+      ],
+      assignment_role: [
+        "day_porter",
+        "night_cleaner",
+        "lead_cleaner",
+        "supervisor",
+        "other",
       ],
       attachment_kind: ["before", "after", "document", "photo"],
       audit_action: ["insert", "update", "delete"],

@@ -281,6 +281,70 @@ async function main() {
   check('closing a contract records the reason as lost', afterLoss.rows[0]?.change_reason === 'lost')
 
   // ---------------------------------------------------------------------------
+  console.log('\nContracted hours')
+
+  await db.exec(`
+    update buildings set
+      day_porter = true,
+      day_porter_hours_per_day = 4,
+      day_porter_days_per_week = 5,
+      night_hours_per_night = 6,
+      night_days_per_week = 5,
+      weekend_service = true,
+      weekend_hours_per_week = 8
+    where id = '44444444-4444-4444-4444-444444444444';
+  `)
+
+  const hours = await db.query(`
+    select weekly_hours, monthly_hours, annual_hours from v_building_hours
+    where building_id = '44444444-4444-4444-4444-444444444444'
+  `)
+  // 4×5 day porter + 6×5 nights + 8 weekend = 58 hours a week.
+  check('weekly hours add up', Number(hours.rows[0]?.weekly_hours) === 58, JSON.stringify(hours.rows[0]))
+  check('annual hours are 52 weeks', Number(hours.rows[0]?.annual_hours) === 3016)
+  check(
+    'monthly hours are the annual figure over 12, not weekly × 4',
+    Math.abs(Number(hours.rows[0]?.monthly_hours) - 3016 / 12) < 0.01,
+    String(hours.rows[0]?.monthly_hours),
+  )
+
+  // Turning the day porter off must remove those hours without losing the number.
+  await db.exec(`
+    update buildings set day_porter = false
+    where id = '44444444-4444-4444-4444-444444444444';
+  `)
+  const noPorter = await db.query(`
+    select weekly_hours from v_building_hours
+    where building_id = '44444444-4444-4444-4444-444444444444'
+  `)
+  check('turning the day porter off drops their hours', Number(noPorter.rows[0]?.weekly_hours) === 38)
+
+  const stillThere = await db.query(`
+    select day_porter_hours_per_day from buildings
+    where id = '44444444-4444-4444-4444-444444444444'
+  `)
+  check(
+    'the day porter hours are remembered, not wiped',
+    Number(stillThere.rows[0]?.day_porter_hours_per_day) === 4,
+  )
+
+  await db.exec(`
+    update buildings set day_porter = true
+    where id = '44444444-4444-4444-4444-444444444444';
+  `)
+
+  // A four-night building must not be billed as five.
+  await db.exec(`
+    update buildings set night_days_per_week = 4
+    where id = '44444444-4444-4444-4444-444444444444';
+  `)
+  const fourNights = await db.query(`
+    select weekly_hours from v_building_hours
+    where building_id = '44444444-4444-4444-4444-444444444444'
+  `)
+  check('a four-night week is not counted as five', Number(fourNights.rows[0]?.weekly_hours) === 52)
+
+  // ---------------------------------------------------------------------------
   console.log('\nActivity roll-up')
 
   await db.exec(`

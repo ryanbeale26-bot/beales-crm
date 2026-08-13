@@ -23,6 +23,16 @@ export async function getPropertyTypes() {
   return data ?? []
 }
 
+export async function getServiceTypes() {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('service_types')
+    .select('id, name')
+    .eq('is_active', true)
+    .order('sort_order')
+  return data ?? []
+}
+
 export async function getLossReasons(appliesTo: 'building' | 'opportunity') {
   const supabase = await createClient()
   const { data } = await supabase

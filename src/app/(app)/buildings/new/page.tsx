@@ -1,6 +1,6 @@
 import { BuildingForm } from '@/app/(app)/buildings/building-form'
 import { PageHeader } from '@/components/page-header'
-import { getOwners, getPropertyTypes } from '@/lib/reference'
+import { getOwners, getPropertyTypes, getServiceTypes } from '@/lib/reference'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function NewBuildingPage({
@@ -11,10 +11,11 @@ export default async function NewBuildingPage({
   const { account: accountId } = await searchParams
   const supabase = await createClient()
 
-  const [{ data: accounts }, owners, propertyTypes] = await Promise.all([
+  const [{ data: accounts }, owners, propertyTypes, serviceTypes] = await Promise.all([
     supabase.from('accounts').select('id, name').is('deleted_at', null).order('name'),
     getOwners(),
     getPropertyTypes(),
+    getServiceTypes(),
   ])
 
   return (
@@ -29,6 +30,7 @@ export default async function NewBuildingPage({
         accounts={accounts ?? []}
         owners={owners}
         propertyTypes={propertyTypes}
+        serviceTypes={serviceTypes}
       />
     </div>
   )

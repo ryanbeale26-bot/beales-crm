@@ -58,6 +58,14 @@ export const BUILDING_STATUS_LABELS = {
   lost: 'Lost',
 } as const
 
+export const ASSIGNMENT_ROLE_LABELS = {
+  day_porter: 'Day porter',
+  night_cleaner: 'Night cleaner',
+  lead_cleaner: 'Lead cleaner',
+  supervisor: 'Supervisor',
+  other: 'Other',
+} as const
+
 export const HEALTH_LABELS = {
   healthy: 'Healthy',
   needs_attention: 'Needs attention',

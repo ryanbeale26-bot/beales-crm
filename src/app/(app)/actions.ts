@@ -85,8 +85,13 @@ export async function saveBuilding(
     entity: (text(formData, 'entity') ?? 'beales') as 'beales' | 'afs',
     contract_start_date: text(formData, 'contract_start_date'),
     contract_end_date: text(formData, 'contract_end_date'),
-    service_days: formData.get('service_days') === 'on',
-    service_nights: formData.get('service_nights') === 'on',
+    day_porter: formData.get('day_porter') === 'on',
+    day_porter_hours_per_day: number(formData, 'day_porter_hours_per_day'),
+    day_porter_days_per_week: number(formData, 'day_porter_days_per_week'),
+    night_hours_per_night: number(formData, 'night_hours_per_night'),
+    night_days_per_week: number(formData, 'night_days_per_week'),
+    weekend_service: formData.get('weekend_service') === 'on',
+    weekend_hours_per_week: number(formData, 'weekend_hours_per_week'),
     scope_notes: text(formData, 'scope_notes'),
     status,
     health_score: text(formData, 'health_score') as
@@ -109,6 +114,19 @@ export async function saveBuilding(
     const { data, error } = await supabase.from('buildings').insert(values).select('id').single()
     if (error) return { error: `Could not create the building: ${error.message}` }
     buildingId = data.id
+  }
+
+  // Service types are a join table, because a site is often janitorial and
+  // maintenance both. Replace the set rather than diffing it.
+  if (buildingId) {
+    const chosen = formData.getAll('service_type_ids').map(String).filter(Boolean)
+    await supabase.from('building_services').delete().eq('building_id', buildingId)
+    if (chosen.length > 0) {
+      const { error } = await supabase
+        .from('building_services')
+        .insert(chosen.map((service_type_id) => ({ building_id: buildingId, service_type_id })))
+      if (error) return { error: `Saved the building, but not its services: ${error.message}` }
+    }
   }
 
   // Monthly value never gets written straight into a column. This closes the
@@ -178,6 +196,99 @@ export async function saveContact(
 
   revalidatePath('/contacts')
   redirect(`/contacts/${data.id}`)
+}
+
+export async function saveEmployee(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const id = text(formData, 'id')
+  const firstName = text(formData, 'first_name')
+  const lastName = text(formData, 'last_name')
+
+  if (!firstName && !lastName) return { error: 'Give the employee a name.' }
+
+  const values = {
+    first_name: firstName ?? '',
+    last_name: lastName ?? '',
+    title: text(formData, 'title'),
+    phone: text(formData, 'phone'),
+    email: text(formData, 'email'),
+    employment_type: text(formData, 'employment_type'),
+    start_date: text(formData, 'start_date'),
+    status: (text(formData, 'status') ?? 'active') as 'active' | 'terminated' | 'leave',
+    paychex_employee_id: text(formData, 'paychex_employee_id'),
+  }
+
+  const supabase = await createClient()
+
+  if (id) {
+    const { error } = await supabase.from('employees').update(values).eq('id', id)
+    if (error) return { error: `Could not save: ${error.message}` }
+    revalidatePath('/employees')
+    redirect(`/employees`)
+  }
+
+  const { data, error } = await supabase.from('employees').insert(values).select('id').single()
+  if (error) return { error: `Could not create the employee: ${error.message}` }
+
+  // Created from a building page? Put them straight to work there.
+  const buildingId = text(formData, 'assign_to_building')
+  if (buildingId) {
+    await supabase.from('employee_assignments').insert({
+      employee_id: data.id,
+      building_id: buildingId,
+      role: (text(formData, 'role') ?? 'other') as AssignmentRole,
+      scheduled_hours_per_week: number(formData, 'scheduled_hours_per_week'),
+      start_date: text(formData, 'start_date') ?? new Date().toISOString().slice(0, 10),
+    })
+    revalidatePath(`/buildings/${buildingId}`)
+    redirect(`/buildings/${buildingId}`)
+  }
+
+  revalidatePath('/employees')
+  redirect('/employees')
+}
+
+type AssignmentRole = 'day_porter' | 'night_cleaner' | 'lead_cleaner' | 'supervisor' | 'other'
+
+/** Put an existing employee to work at a building. */
+export async function assignEmployee(formData: FormData) {
+  const buildingId = String(formData.get('building_id'))
+  const employeeId = String(formData.get('employee_id'))
+  if (!buildingId || !employeeId) return
+
+  const supabase = await createClient()
+  await supabase.from('employee_assignments').insert({
+    building_id: buildingId,
+    employee_id: employeeId,
+    role: (String(formData.get('role') || 'other') as AssignmentRole) ?? 'other',
+    scheduled_hours_per_week: number(formData, 'scheduled_hours_per_week'),
+    start_date: String(formData.get('start_date') || new Date().toISOString().slice(0, 10)),
+  })
+
+  revalidatePath(`/buildings/${buildingId}`)
+}
+
+/**
+ * End an assignment rather than deleting it. An assignment that ended plus
+ * another that began is how the staff-movement report sees a move — deleting
+ * the row would erase that history.
+ */
+export async function endAssignment(formData: FormData) {
+  const id = String(formData.get('assignment_id'))
+  const buildingId = String(formData.get('building_id'))
+
+  const supabase = await createClient()
+  await supabase
+    .from('employee_assignments')
+    .update({
+      end_date: new Date().toISOString().slice(0, 10),
+      end_reason: String(formData.get('end_reason') || '') || null,
+    })
+    .eq('id', id)
+
+  revalidatePath(`/buildings/${buildingId}`)
 }
 
 /** Link or unlink a contact and a building. */

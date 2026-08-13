@@ -8,6 +8,7 @@ const NAV = [
   { label: 'Accounts', href: '/accounts' },
   { label: 'Buildings', href: '/buildings' },
   { label: 'Contacts', href: '/contacts' },
+  { label: 'Employees', href: '/employees' },
 ]
 
 /** Sections that arrive in later phases. Shown greyed so the shape is visible. */

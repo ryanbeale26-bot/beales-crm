@@ -28,8 +28,13 @@ type Building = {
   entity: 'beales' | 'afs'
   contract_start_date: string | null
   contract_end_date: string | null
-  service_days: boolean
-  service_nights: boolean
+  day_porter: boolean
+  day_porter_hours_per_day: number | null
+  day_porter_days_per_week: number | null
+  night_hours_per_night: number | null
+  night_days_per_week: number | null
+  weekend_service: boolean
+  weekend_hours_per_week: number | null
   scope_notes: string | null
   status: 'pending' | 'active' | 'lost'
   health_score: 'healthy' | 'needs_attention' | 'at_risk' | null
@@ -44,6 +49,8 @@ export function BuildingForm({
   accounts,
   owners,
   propertyTypes,
+  serviceTypes,
+  selectedServiceTypeIds,
   currentMonthlyValue,
 }: {
   building?: Building
@@ -51,10 +58,14 @@ export function BuildingForm({
   accounts: { id: string; name: string }[]
   owners: { id: string; full_name: string; email: string; is_active: boolean }[]
   propertyTypes: { id: string; name: string }[]
+  serviceTypes: { id: string; name: string }[]
+  selectedServiceTypeIds?: string[]
   currentMonthlyValue?: number | null
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(saveBuilding, {})
   const [status, setStatus] = useState(building?.status ?? 'pending')
+  const [dayPorter, setDayPorter] = useState(building?.day_porter ?? false)
+  const [weekend, setWeekend] = useState(building?.weekend_service ?? false)
 
   return (
     <form action={action} className="max-w-2xl space-y-5">
@@ -239,16 +250,113 @@ export function BuildingForm({
         </Field>
       </div>
 
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Service times</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="service_days" defaultChecked={building?.service_days} className="size-4" />
-          Days
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium">Service type</legend>
+        <p className="text-muted-foreground text-xs">
+          Tick everything Beale&rsquo;s provides here — a site is often janitorial and
+          maintenance both.
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {serviceTypes.map((t) => (
+            <label key={t.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="service_type_ids"
+                value={t.id}
+                defaultChecked={selectedServiceTypeIds?.includes(t.id)}
+                className="size-4"
+              />
+              {t.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="bg-muted/40 space-y-4 rounded-xl border p-4">
+        <legend className="px-1 text-sm font-medium">Contracted hours</legend>
+        <p className="text-muted-foreground -mt-2 text-xs">
+          What the contract calls for. Who actually covers it is set on the building page.
+        </p>
+
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            name="day_porter"
+            checked={dayPorter}
+            onChange={(e) => setDayPorter(e.target.checked)}
+            className="size-4"
+          />
+          Day porter
         </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="service_nights" defaultChecked={building?.service_nights} className="size-4" />
-          Nights
+
+        {dayPorter && (
+          <div className="grid gap-4 pl-6 sm:grid-cols-2">
+            <Field label="Hours per day" htmlFor="day_porter_hours_per_day">
+              <Input
+                id="day_porter_hours_per_day"
+                name="day_porter_hours_per_day"
+                inputMode="decimal"
+                defaultValue={building?.day_porter_hours_per_day ?? ''}
+              />
+            </Field>
+            <Field label="Days per week" htmlFor="day_porter_days_per_week">
+              <Input
+                id="day_porter_days_per_week"
+                name="day_porter_days_per_week"
+                inputMode="decimal"
+                defaultValue={building?.day_porter_days_per_week ?? 5}
+              />
+            </Field>
+          </div>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Night staff — hours per night" htmlFor="night_hours_per_night">
+            <Input
+              id="night_hours_per_night"
+              name="night_hours_per_night"
+              inputMode="decimal"
+              defaultValue={building?.night_hours_per_night ?? ''}
+            />
+          </Field>
+          <Field label="Nights per week" htmlFor="night_days_per_week">
+            <Input
+              id="night_days_per_week"
+              name="night_days_per_week"
+              inputMode="decimal"
+              defaultValue={building?.night_days_per_week ?? 5}
+            />
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            name="weekend_service"
+            checked={weekend}
+            onChange={(e) => setWeekend(e.target.checked)}
+            className="size-4"
+          />
+          Weekend service
         </label>
+
+        {weekend && (
+          <div className="pl-6">
+            <Field
+              label="Weekend hours per week"
+              htmlFor="weekend_hours_per_week"
+              hint="The total across Saturday and Sunday, not per day."
+            >
+              <Input
+                id="weekend_hours_per_week"
+                name="weekend_hours_per_week"
+                inputMode="decimal"
+                className="max-w-40"
+                defaultValue={building?.weekend_hours_per_week ?? ''}
+              />
+            </Field>
+          </div>
+        )}
       </fieldset>
 
       <Field label="Scope of work" htmlFor="scope_notes">
