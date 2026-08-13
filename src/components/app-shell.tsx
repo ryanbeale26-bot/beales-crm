@@ -22,6 +22,17 @@ const NAV = [
 
 const LATER = ['Projects']
 
+/**
+ * Pages that need the whole screen rather than the reading column.
+ * Everything else is document-shaped and stays narrow on purpose — a line of
+ * body text 1,400px wide is horrible to read. The pipeline board is the
+ * exception: it is eight columns side by side, and squeezing it into 4xl showed
+ * three of them.
+ *
+ * Exact matches only, so /opportunities/[id] stays a normal narrow page.
+ */
+const FULL_WIDTH = ['/opportunities']
+
 export function AppShell({
   displayName,
   initial,
@@ -144,7 +155,14 @@ export function AppShell({
           <span className="text-muted-foreground truncate text-sm md:hidden">Beale&rsquo;s CRM</span>
         </header>
 
-        <main className="mx-auto w-full max-w-4xl flex-1 px-6 pt-2 pb-24 md:px-12">{children}</main>
+        <main
+          className={cn(
+            'mx-auto w-full flex-1 px-6 pt-2 pb-24',
+            FULL_WIDTH.includes(pathname) ? 'max-w-none md:px-6' : 'max-w-4xl md:px-12',
+          )}
+        >
+          {children}
+        </main>
       </div>
 
       {/* On every screen, because the moment you have to navigate somewhere to

@@ -155,7 +155,10 @@ export function PipelineBoard({
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <div className="-mx-2 flex gap-3 overflow-x-auto px-2 pb-4">
+          {/* Columns share the width rather than each taking a fixed 256px, so
+              every stage is on screen at once. They stop shrinking at 10rem and
+              the row scrolls instead, which is what happens on a small laptop. */}
+          <div className="-mx-2 flex gap-2 overflow-x-auto px-2 pb-4">
             {stages.map((stage) => (
               <Column key={stage.id} stage={stage} deals={byStage(stage.id)} />
             ))}
@@ -240,7 +243,7 @@ function Column({ stage, deals }: { stage: BoardStage; deals: BoardDeal[] }) {
     <div
       ref={setNodeRef}
       className={cn(
-        'w-64 shrink-0 rounded-[3px] p-2 transition-colors duration-75',
+        'min-w-40 flex-1 basis-0 rounded-[3px] p-2 transition-colors duration-75',
         isOver ? 'bg-[rgba(27,58,107,0.075)]' : 'bg-[rgba(27,58,107,0.028)]',
       )}
     >

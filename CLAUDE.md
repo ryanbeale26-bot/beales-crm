@@ -361,7 +361,7 @@ Other rules:
 | Page titles | 40px bold, `.page-title` |
 | Inputs | Filled, no border. The block is the affordance; the ring appears only on keyboard focus |
 | Buttons | Small (h-7). Navy with white text is the one primary action per page; everything else is quiet |
-| Layout | Fixed 240px sidebar, content in a 4xl column. Sidebar becomes a drawer under `md` |
+| Layout | Fixed 240px sidebar, content in a 4xl column. Sidebar becomes a drawer under `md`. **One exception:** routes listed in `FULL_WIDTH` in `app-shell.tsx` get the whole screen — currently only `/opportunities`, because eight kanban columns inside a 896px column showed three of them. Exact matches only, so deal detail pages stay narrow. Keep the list short: long lines of body text are hard to read, which is why the column exists |
 | Logo | `public/beales-logo.png`, the official transparent file. Guide minimum is 150px wide for digital — it runs at 150px in the sidebar and 190px on login. Do not recolour, stretch, or crowd it |
 
 Two deliberate departures from the guide, both for legibility at screen density:
