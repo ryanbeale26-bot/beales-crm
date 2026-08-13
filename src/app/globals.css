@@ -69,96 +69,127 @@ body {
 }
 
 /* -----------------------------------------------------------------------------
-   Palette
+   Beale's LLC brand palette
    -----------------------------------------------------------------------------
-   Warm near-black on white rather than pure #000 on #fff, quiet borders, and a
-   3px corner radius. The warmth is the whole trick: #37352F reads as softer and
-   more readable over a long working day than true black, and borders at 9%
-   opacity separate things without drawing boxes around them.
+   From BealesLLC_BrandGuide.docx. The layout idiom stays calm and document-like;
+   the colour is the brand's.
+
+     Navy       #1B3A6B  headings, primary buttons, borders
+     Gold       #F5B731  accent highlights, badge fills
+     Deep gold  #D4892A  secondary accents, gold hovers
+     Charcoal   #2D2D2D  body text
+     Light blue #E8F0FA  section backgrounds, card fills
+     White      #FFFFFF  backgrounds
+
+   Contrast, measured against white:
+     Navy 9.9:1 and charcoal 13.6:1 — both fine for body text.
+     Gold is 1.9:1, so it is NEVER text on white. It is a fill, with navy on top
+     (6.2:1), or a solid indicator bar. Deep gold is 3.2:1 — large text and
+     borders only.
    -------------------------------------------------------------------------- */
 
 :root {
-  --background: #ffffff;
-  --foreground: #37352f;
-  --card: #ffffff;
-  --card-foreground: #37352f;
-  --popover: #ffffff;
-  --popover-foreground: #37352f;
+  --brand-navy: #1b3a6b;
+  --brand-gold: #f5b731;
+  --brand-deep-gold: #d4892a;
+  --brand-charcoal: #2d2d2d;
+  --brand-light-blue: #e8f0fa;
 
-  /* Primary actions only. Most buttons in this UI are quiet on purpose. */
-  --primary: #2383e2;
+  --background: #ffffff;
+  --foreground: #2d2d2d;
+  --heading: #1b3a6b;
+  --card: #ffffff;
+  --card-foreground: #2d2d2d;
+  --popover: #ffffff;
+  --popover-foreground: #2d2d2d;
+
+  /* The brand guide is explicit: CTA buttons are white on navy. */
+  --primary: #1b3a6b;
   --primary-foreground: #ffffff;
 
-  --secondary: rgba(55, 53, 47, 0.06);
-  --secondary-foreground: #37352f;
-  --muted: rgba(55, 53, 47, 0.04);
-  --muted-foreground: rgba(55, 53, 47, 0.65);
-  --accent: rgba(55, 53, 47, 0.06);
-  --accent-foreground: #37352f;
-  --destructive: #eb5757;
+  --secondary: #e8f0fa;
+  --secondary-foreground: #1b3a6b;
+  --muted: rgba(27, 58, 107, 0.05);
+  --muted-foreground: rgba(45, 45, 45, 0.62);
+  --accent: #f5b731;
+  --accent-foreground: #1b3a6b;
+  --destructive: #c0392b;
 
-  --border: rgba(55, 53, 47, 0.09);
-  --input: rgba(55, 53, 47, 0.16);
-  --ring: rgba(35, 131, 226, 0.45);
+  --border: rgba(27, 58, 107, 0.12);
+  --input: rgba(27, 58, 107, 0.2);
+  --ring: rgba(27, 58, 107, 0.45);
 
-  /* Row hover. Instant, subtle, everywhere — the main feedback mechanism. */
-  --hover: rgba(55, 53, 47, 0.06);
+  /* Row hover: a navy tint rather than grey, so even this reads as brand.
+     The guide nominates deep gold for hovers, but a gold wash across a dense
+     list is loud and hurts legibility — light blue is the guide's own choice
+     for section fills and behaves far better at this density. */
+  --hover: rgba(27, 58, 107, 0.055);
 
-  --chart-1: #2383e2;
-  --chart-2: #0f7b6c;
-  --chart-3: #d9730d;
-  --chart-4: #9065b0;
-  --chart-5: #e03e3e;
+  --chart-1: #1b3a6b;
+  --chart-2: #f5b731;
+  --chart-3: #d4892a;
+  --chart-4: #4a72b0;
+  --chart-5: #7a8fa8;
 
   --radius: 3px;
 
-  --sidebar: #f7f6f3;
-  --sidebar-foreground: rgba(55, 53, 47, 0.65);
-  --sidebar-primary: #2383e2;
+  --sidebar: #e8f0fa;
+  --sidebar-foreground: rgba(27, 58, 107, 0.72);
+  --sidebar-primary: #1b3a6b;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: rgba(55, 53, 47, 0.08);
-  --sidebar-accent-foreground: #37352f;
-  --sidebar-border: rgba(55, 53, 47, 0.09);
-  --sidebar-ring: rgba(35, 131, 226, 0.45);
+  --sidebar-accent: rgba(27, 58, 107, 0.1);
+  --sidebar-accent-foreground: #1b3a6b;
+  --sidebar-border: rgba(27, 58, 107, 0.12);
+  --sidebar-ring: rgba(27, 58, 107, 0.45);
 }
 
+/* The brand guide covers light backgrounds only. This is an extrapolation:
+   a deep navy ground with gold kept as the accent, so a dark screen still
+   reads as Beale's. Nothing here overrides a guide rule. */
 .dark {
-  --background: #191919;
-  --foreground: rgba(255, 255, 255, 0.81);
-  --card: #202020;
-  --card-foreground: rgba(255, 255, 255, 0.81);
-  --popover: #252525;
-  --popover-foreground: rgba(255, 255, 255, 0.81);
-  --primary: #2383e2;
-  --primary-foreground: #ffffff;
-  --secondary: rgba(255, 255, 255, 0.055);
-  --secondary-foreground: rgba(255, 255, 255, 0.81);
-  --muted: rgba(255, 255, 255, 0.04);
-  --muted-foreground: rgba(255, 255, 255, 0.443);
-  --accent: rgba(255, 255, 255, 0.055);
-  --accent-foreground: rgba(255, 255, 255, 0.81);
+  --background: #101a2b;
+  --foreground: rgba(255, 255, 255, 0.88);
+  --heading: #ffffff;
+  --card: #16233a;
+  --card-foreground: rgba(255, 255, 255, 0.88);
+  --popover: #16233a;
+  --popover-foreground: rgba(255, 255, 255, 0.88);
+  --primary: #f5b731;
+  --primary-foreground: #1b3a6b;
+  --secondary: rgba(255, 255, 255, 0.08);
+  --secondary-foreground: rgba(255, 255, 255, 0.88);
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
+  --accent: #f5b731;
+  --accent-foreground: #1b3a6b;
   --destructive: #ff7369;
-  --border: rgba(255, 255, 255, 0.094);
-  --input: rgba(255, 255, 255, 0.14);
-  --ring: rgba(35, 131, 226, 0.5);
-  --hover: rgba(255, 255, 255, 0.055);
-  --chart-1: #529cca;
-  --chart-2: #4dab9a;
-  --chart-3: #ffa344;
-  --chart-4: #9a6dd7;
-  --chart-5: #ff7369;
-  --sidebar: #202020;
-  --sidebar-foreground: rgba(255, 255, 255, 0.443);
-  --sidebar-primary: #2383e2;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: rgba(255, 255, 255, 0.055);
-  --sidebar-accent-foreground: rgba(255, 255, 255, 0.81);
-  --sidebar-border: rgba(255, 255, 255, 0.094);
-  --sidebar-ring: rgba(35, 131, 226, 0.5);
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.18);
+  --ring: rgba(245, 183, 49, 0.5);
+  --hover: rgba(255, 255, 255, 0.07);
+  --chart-1: #7aa5e0;
+  --chart-2: #f5b731;
+  --chart-3: #d4892a;
+  --chart-4: #4a72b0;
+  --chart-5: #9fb3c8;
+  --sidebar: #16233a;
+  --sidebar-foreground: rgba(255, 255, 255, 0.6);
+  --sidebar-primary: #f5b731;
+  --sidebar-primary-foreground: #1b3a6b;
+  --sidebar-accent: rgba(255, 255, 255, 0.1);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.12);
+  --sidebar-ring: rgba(245, 183, 49, 0.5);
 }
 
 @theme inline {
   --color-hover: var(--hover);
+  --color-heading: var(--heading);
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-deep-gold: var(--brand-deep-gold);
+  --color-brand-light-blue: var(--brand-light-blue);
+  --font-heading: var(--font-montserrat), Arial, sans-serif;
 }
 
 @layer base {
@@ -173,21 +204,31 @@ body {
   html {
     @apply font-sans;
   }
-  /* Headings are semibold and tight, never bold and airy. */
+  /* Headings: Montserrat, navy, per the brand guide's typography table. */
   h1,
   h2,
   h3 {
+    font-family: var(--font-heading);
     font-weight: 600;
     letter-spacing: -0.01em;
+    color: var(--heading);
   }
 }
 
 /* A page title, the size of a document heading rather than a form label. */
 .page-title {
+  font-family: var(--font-heading);
   font-size: 40px;
-  line-height: 1.2;
+  line-height: 1.15;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--heading);
+}
+
+/* The logo's oval gradient, straight from the brand guide. Used sparingly —
+   currently the accent rule under a page title. */
+.brand-gradient {
+  background: linear-gradient(135deg, #d4892a 0%, #f5b731 50%, #d4892a 100%);
 }
 
 @media (max-width: 640px) {

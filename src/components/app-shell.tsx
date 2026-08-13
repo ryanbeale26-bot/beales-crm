@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
@@ -47,11 +48,20 @@ export function AppShell({
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        <div className="flex items-center gap-2 px-3 py-3">
-          <div className="bg-foreground/85 text-background flex size-5 items-center justify-center rounded-[3px] text-[11px] font-semibold">
-            B
-          </div>
-          <span className="text-foreground truncate text-sm font-medium">Beale&rsquo;s CRM</span>
+        {/* The guide's minimum digital size is 150px wide, and the sidebar is
+            240px — so the logo runs full width with clear space around it
+            rather than being shrunk into a corner. */}
+        <div className="px-4 pt-4 pb-3">
+          <Link href="/dashboard" className="block">
+            <Image
+              src="/beales-logo.png"
+              alt="Beale's LLC"
+              width={2000}
+              height={1489}
+              priority
+              className="h-auto w-[150px]"
+            />
+          </Link>
         </div>
 
         {/* Tapping any link closes the mobile drawer, so it never covers the
@@ -64,13 +74,18 @@ export function AppShell({
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'row-hover mb-px flex items-center gap-2 rounded-[3px] px-2 py-1 text-sm',
+                  'row-hover mb-px relative flex items-center gap-2 rounded-[3px] px-2 py-1.5 text-sm',
                   active
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
                     : 'text-sidebar-foreground',
                 )}
               >
-                <span className="w-4 shrink-0 text-center opacity-60">{item.icon}</span>
+                {/* Gold marks the current section — the guide's accent colour
+                    doing accent work, never carrying text. */}
+                {active && (
+                  <span className="bg-brand-gold absolute top-1 bottom-1 -left-0.5 w-[3px] rounded-full" />
+                )}
+                <span className="w-4 shrink-0 text-center opacity-70">{item.icon}</span>
                 {item.label}
               </Link>
             )

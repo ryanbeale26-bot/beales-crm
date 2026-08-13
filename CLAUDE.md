@@ -238,20 +238,53 @@ Note: `next dev` appends an auto-generated block to the bottom of this file. Lea
 
 ### The look and feel
 
-The UI follows a Notion-style design language — the *idiom*, not their branding or assets.
-Keep to it when adding screens:
+**Brand colours from `BealesLLC_BrandGuide.docx`** (kept in git-ignored `private-data/`).
+The layout idiom is Notion-like — calm, document-shaped, hairline dividers — but every colour
+is the brand's.
+
+| Token | Hex | Where it goes |
+|---|---|---|
+| Navy | `#1B3A6B` | Headings, primary buttons, borders, breadcrumbs |
+| Gold | `#F5B731` | Accent only — active-section marker, badge fills. **Never text** |
+| Deep gold | `#D4892A` | Secondary accents, the logo gradient |
+| Charcoal | `#2D2D2D` | Body text |
+| Light blue | `#E8F0FA` | Sidebar, section backgrounds, card fills |
+| White | `#FFFFFF` | Page background |
+
+Available as `--brand-navy`, `--brand-gold`, `--brand-deep-gold`, `--brand-light-blue`, and
+as Tailwind classes (`bg-brand-gold`). Semantic tokens (`--primary`, `--foreground`,
+`--sidebar`…) already map onto them, so use those first.
+
+**Gold can never carry text.** It is 1.9:1 on white, which fails every accessibility bar. Use
+it as a fill with navy on top (6.2:1), or as a solid indicator. Deep gold at 3.2:1 is large
+text and borders only. Measured in the browser: body 13.8:1, titles and buttons 11.3:1,
+sidebar links 9.8:1 — all comfortably past WCAG AA.
+
+Other rules:
 
 | | |
 |---|---|
-| Text | `#37352F` warm near-black, never pure black. Secondary text at 65% opacity |
-| Borders | `rgba(55,53,47,0.09)`. Hairlines between rows, not boxes around them |
-| Hover | `rgba(55,53,47,0.06)` background, 20ms — the main feedback mechanism. Use the `.row-hover` class |
+| Borders | `rgba(27,58,107,0.12)`. Hairlines between rows, not boxes around them |
+| Hover | `rgba(27,58,107,0.055)`, 20ms. Use the `.row-hover` class |
 | Radius | 3px everywhere (`--radius`) |
-| Font | System stack, which is SF Pro on Mac and iPhone. No webfont, so text paints on the first frame |
-| Page titles | 40px bold, `.page-title` — a document heading, not a form label |
-| Inputs | Filled grey, no border. The block is the affordance; the ring appears only on keyboard focus |
-| Buttons | Small (h-7) and quiet. Blue `#2383e2` is reserved for the one primary action on a page |
-| Layout | Fixed 240px sidebar, content in a 4xl column with generous padding. Sidebar becomes a drawer under `md` |
+| Headings | Montserrat (brand), navy, via `--font-heading` |
+| Body | Arial first, then the system stack — both named in the guide, and Arial is already on every device so body copy paints on the first frame |
+| Page titles | 40px bold, `.page-title` |
+| Inputs | Filled, no border. The block is the affordance; the ring appears only on keyboard focus |
+| Buttons | Small (h-7). Navy with white text is the one primary action per page; everything else is quiet |
+| Layout | Fixed 240px sidebar, content in a 4xl column. Sidebar becomes a drawer under `md` |
+| Logo | `public/beales-logo.png`, the official transparent file. Guide minimum is 150px wide for digital — it runs at 150px in the sidebar and 190px on login. Do not recolour, stretch, or crowd it |
+
+Two deliberate departures from the guide, both for legibility at screen density:
+
+- The guide nominates **deep gold for hovers**. A gold wash across a dense list is loud and
+  hurts readability, so row hover is a light navy tint — light blue is the guide's own choice
+  for section fills.
+- **Dark mode is an extrapolation.** The guide covers light backgrounds only. Dark mode uses a
+  deep navy ground with gold as the accent. Nothing there overrides a stated rule.
+
+`.brand-gradient` is the logo's oval gradient from the guide, used sparingly (currently the
+rule under the login title).
 
 Shared building blocks live in `src/components/page-header.tsx`: `PageHeader` (breadcrumbs +
 title + actions), `RowList` / `Row` for lists, `Property` for key/value lines, `SectionTitle`,

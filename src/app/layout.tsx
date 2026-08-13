@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { Montserrat } from 'next/font/google'
 
 import './globals.css'
 
@@ -11,22 +12,30 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#ffffff',
+  themeColor: '#1b3a6b',
 }
 
 /**
- * The system font stack, which resolves to SF Pro on Mac and iPhone. No webfont
- * download, so text paints on the first frame — which matters more than brand
- * typography when someone is opening this on 4G in a car park.
+ * Headings only. The brand guide names Arial Black / Montserrat for headlines
+ * and Arial / Open Sans for body, so body text uses the stack below — Arial is
+ * on every Mac, iPhone and PC already, which means body copy paints on the
+ * first frame with nothing to download.
  */
-const fontStack = [
+const montserrat = Montserrat({
+  subsets: ['latin'],
+  weight: ['600', '700'],
+  display: 'swap',
+  variable: '--font-montserrat',
+})
+
+const bodyStack = [
+  'Arial',
   'ui-sans-serif',
   '-apple-system',
   'BlinkMacSystemFont',
   '"Segoe UI"',
   'Helvetica',
   '"Apple Color Emoji"',
-  'Arial',
   'sans-serif',
 ].join(', ')
 
@@ -34,7 +43,11 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" style={{ ['--font-sans' as string]: fontStack }}>
+    <html
+      lang="en"
+      className={montserrat.variable}
+      style={{ ['--font-sans' as string]: bodyStack }}
+    >
       <body className="min-h-full antialiased">{children}</body>
     </html>
   )
