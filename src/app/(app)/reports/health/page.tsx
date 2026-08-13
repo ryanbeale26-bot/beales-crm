@@ -1,7 +1,7 @@
 import Link from 'next/link'
 
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
-import { Bar, ExportLink, Stat } from '@/components/report'
+import { Bar, ExportLink, HealthDot, Stat } from '@/components/report'
 import { money } from '@/lib/format'
 import { fetchHealth, healthLabel } from '@/lib/reports/health'
 import { createClient } from '@/lib/supabase/server'
@@ -61,7 +61,10 @@ export default async function HealthReportPage() {
           {rows.map((r) => (
             <div key={r.health_score ?? 'unset'} className="border-border border-b px-2 py-2.5">
               <div className="flex items-baseline justify-between gap-4">
-                <span className="text-sm font-medium">{healthLabel(r.health_score)}</span>
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <HealthDot score={r.health_score} />
+                  {healthLabel(r.health_score)}
+                </span>
                 <span className="text-muted-foreground shrink-0 text-sm">
                   {r.building_count} across {r.account_count}{' '}
                   {Number(r.account_count) === 1 ? 'account' : 'accounts'} · {money(r.mrr)}
@@ -116,7 +119,10 @@ export default async function HealthReportPage() {
                 </p>
               </div>
               <div className="shrink-0 text-right text-sm">
-                <div>{healthLabel(b.health_score)}</div>
+                <div className="flex items-center justify-end gap-1.5">
+                  <HealthDot score={b.health_score} />
+                  {healthLabel(b.health_score)}
+                </div>
                 <div className="text-muted-foreground">
                   {b.monthly_value === null ? 'no value' : `${money(b.monthly_value)}/mo`}
                 </div>

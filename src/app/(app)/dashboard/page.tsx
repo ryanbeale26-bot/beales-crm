@@ -1,8 +1,9 @@
 import Link from 'next/link'
 
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
-import { Bar, Stat } from '@/components/report'
-import { count, HEALTH_LABELS, money, percent } from '@/lib/format'
+import { Bar, HealthDot, Stat } from '@/components/report'
+import { count, date, HEALTH_LABELS, money, percent } from '@/lib/format'
+import { fetchMyFocus } from '@/lib/reports/my-focus'
 import { createClient } from '@/lib/supabase/server'
 
 /**
@@ -21,6 +22,17 @@ import { createClient } from '@/lib/supabase/server'
  */
 export default async function DashboardPage() {
   const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const [me, focus] = await Promise.all([
+    user
+      ? supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    user ? fetchMyFocus(supabase, user.id) : Promise.resolve(null),
+  ])
+  const firstName = me.data?.full_name?.split(' ')[0] ?? null
 
   const [
     { data: coverage, error: coverageError },
@@ -77,6 +89,136 @@ export default async function DashboardPage() {
         <p className="text-destructive text-sm">Could not load the dashboard: {error.message}</p>
       )}
 
+      {/*
+        The personal half. Everything below this is the company's numbers,
+        shared by all five; this part is only yours, derived from what you own.
+        Nothing here is typed — five people who have never used a CRM will not
+        maintain a to-do list inside one.
+      */}
+      {focus && (
+        <div className="mb-10 grid gap-8 sm:grid-cols-2">
+          <div>
+            <SectionTitle
+              aside={
+                focus.deals.length > 0 ? (
+                  <span className="text-muted-foreground text-xs">Closest to won first</span>
+                ) : undefined
+              }
+            >
+              {firstName ? `${firstName}'s top focus` : 'Your top focus'}
+            </SectionTitle>
+            {focus.deals.length === 0 ? (
+              <EmptyState
+                title={
+                  focus.dealsOwned === 0
+                    ? 'No deals are assigned to you.'
+                    : 'None of your deals are still open.'
+                }
+              >
+                {focus.dealsOwned === 0 && (
+                  <>
+                    Set an owner on a{' '}
+                    <Link href="/opportunities" className="underline">
+                      deal
+                    </Link>{' '}
+                    and it appears here.
+                  </>
+                )}
+              </EmptyState>
+            ) : (
+              <div className="border-border border-t">
+                {focus.deals.slice(0, 5).map((d) => (
+                  <Link
+                    key={d.id}
+                    href={`/opportunities/${d.id}`}
+                    className="row-hover border-border flex items-center justify-between gap-3 border-b px-2 py-2"
+                  >
+                    <div className="min-w-0">
+                      <span className="truncate text-sm font-medium">{d.name}</span>
+                      <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                        {d.stage} · {d.annual_value ? money(d.annual_value) : 'no value'}
+                      </p>
+                    </div>
+                    <span
+                      className={
+                        d.days_until_close !== null && d.days_until_close < 0
+                          ? 'text-destructive shrink-0 text-xs'
+                          : 'text-muted-foreground shrink-0 text-xs'
+                      }
+                    >
+                      {d.days_until_close === null
+                        ? 'no date'
+                        : d.days_until_close < 0
+                          ? `${Math.abs(d.days_until_close)}d late`
+                          : `${d.days_until_close}d`}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+            {focus.deals.length > 0 && (
+              <p className="text-muted-foreground/80 mt-2 text-xs">
+                {focus.deals.length > 5 && (
+                  <>
+                    {focus.deals.length - 5} more of yours on the{' '}
+                    <Link href="/opportunities" className="underline">
+                      board
+                    </Link>
+                    .{' '}
+                  </>
+                )}
+                {focus.overdue.length > 0 && (
+                  <>
+                    {focus.overdue.length} of {focus.deals.length} have a close date already in the
+                    past — worth updating.
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <SectionTitle>Next follow-up</SectionTitle>
+            {focus.followUps.length === 0 ? (
+              <EmptyState title="No accounts are assigned to you.">
+                Set an owner on an{' '}
+                <Link href="/accounts" className="underline">
+                  account
+                </Link>{' '}
+                and it appears here.
+              </EmptyState>
+            ) : (
+              <div className="border-border border-t">
+                {focus.followUps.slice(0, 5).map((a) => (
+                  <Link
+                    key={a.account_id}
+                    href={`/accounts/${a.account_id}`}
+                    className="row-hover border-border flex items-center justify-between gap-3 border-b px-2 py-2"
+                  >
+                    <div className="min-w-0">
+                      <span className="truncate text-sm font-medium">{a.account_name}</span>
+                      <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                        {a.last_activity ? `Last touched ${date(a.last_activity)}` : 'Never touched'}
+                        {a.monthly_value > 0 && ` · ${money(a.monthly_value)}/mo`}
+                      </p>
+                    </div>
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {a.days_quiet === null ? 'never' : `${a.days_quiet}d`}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+            {focus.followUps.length > 5 && (
+              <p className="text-muted-foreground/80 mt-2 text-xs">
+                {focus.followUps.length - 5} more of yours. Quietest first.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <SectionTitle>Everyone&apos;s numbers</SectionTitle>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <Stat
           label="Active clients"
@@ -195,7 +337,8 @@ export default async function DashboardPage() {
           {healthRows.map((r) => (
             <div key={r.health_score ?? 'unset'} className="border-border border-b px-2 py-2.5">
               <div className="flex items-baseline justify-between gap-4">
-                <span className="text-sm font-medium">
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <HealthDot score={r.health_score} />
                   {r.health_score
                     ? HEALTH_LABELS[r.health_score as keyof typeof HEALTH_LABELS]
                     : 'Not scored'}

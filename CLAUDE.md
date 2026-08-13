@@ -353,9 +353,32 @@ Rehearsed against the real workbook: 51 deals at $89,062/mo, 9 matched to an acc
 rows, zero errors; then tab 5 updated 9 and created 4, skipping the summary row. Both rolled back,
 and the database was verified row-for-row identical to how it started.
 
-**What Phase 5 shipped.** `/dashboard` mirrors tab 0 — six tiles, pipeline by stage, client
-health. `/reports` is an index over six reports: pipeline (extended), revenue, account expansion,
-losses, client health, activity coverage. Every report exports to CSV.
+**What Phase 5 shipped.** `/dashboard` has a personal section — *[name]'s top focus* and *Next
+follow-up* — above the company numbers, which mirror tab 0: six tiles, pipeline by stage, client
+health with the traffic-light dots. `/reports` is an index over six reports: pipeline (extended),
+revenue, account expansion, losses, client health, activity coverage. Every report exports to CSV.
+
+### Reconciling the dashboard against `0-Dashboard` (screenshot read 2026-08-13)
+
+The tab was finally seen this session. **Two of its tables are entirely broken** — `PIPELINE BY
+STAGE` and `CLIENT HEALTH SUMMARY` show 0 in every count and $0 in every value, despite 51 deals
+and 38 clients in the tabs. The stage table is also missing `Hot Lead` and `RFP Response`
+altogether, so those deals would vanish even once the formulas were fixed. The CRM's versions of
+both work. Do not port those formulas.
+
+| Tile | Sheet | CRM | Why |
+|---|---|---|---|
+| Active Clients | 38 | 38 | Exact match. Counts **buildings**, confirmed by Ryan |
+| Pipeline Deals | 51 | 30 | Sheet counts every row in tab 1 including 16 won and 5 lost. **Ryan chose open-only** |
+| Monthly ARR | $44,648 | $47,148 | The CRM adds 91 Longwater Drive at $2,500, which the sheet never had. "Monthly ARR" means MRR |
+| Pipeline Value | $89,062 | $163,356 | Sheet is **monthly across all 51 deals**, including lost ones. **Ryan chose annual, open-only** |
+| Contacts | 95 | 97 | All 97 came from the import, none by hand — the sheet's formula appears to miss two rows |
+| Win Rate | 86% | 80% | **Unreconciled.** Tab 1 alone gives 76.2%, all deals 80%, Won/Lost 92.3%, its broken `D5:D15` summary 90.9%. None is 86%. Likely stale, given the two tables under it are dead. The H5 formula was never supplied |
+
+Rows 18–25 of the tab are a daily briefing (Activities Logged, Client Matches, Meetings Today,
+Pipeline Updates, Top Focus, Next Follow-Up). Ryan's decision: **the dashboard is per user, and
+should show top focus and next follow-up per user.** Meetings Today and Client Matches are fed by
+Granola and calendar automation and wait for Phase 7.
 
 Two migrations: `20260814090000_reporting_views.sql` and `20260814090100_clear_imported_close_dates.sql`.
 
@@ -377,6 +400,7 @@ Where things live:
 |---|---|
 | `src/components/report.tsx` | `Bar`, `Stat`, `BarRow`, `MonthBars`, `Coverage`, `Delta`, `rank()`, `ExportLink` |
 | `src/lib/reports/<name>.ts` | One `fetchX(supabase)` per report, plus its CSV `Column[]`. **The page and its export route both call it** — that is the only reliable way to stop a CSV disagreeing with the screen it came from |
+| `src/lib/reports/my-focus.ts` | The per-user half of the dashboard. Reads `owner_id` **and** `secondary_owner_id` on opportunities and accounts |
 | `src/lib/csv.ts` | `toCsv()` with RFC-4180 quoting, `csvResponse()`, `csvFilename()`. Numbers stay raw so Excel can sum a column; a UTF-8 BOM so em-dashes survive |
 | `src/app/(app)/reports/<name>/export/route.ts` | Nine lines each: fetch, `toCsv`, `csvResponse` |
 
@@ -516,6 +540,16 @@ in a car park.
       these are filled in. The screens say so, but the fix is data entry, not code.
 - [ ] Only 2 of 30 open deals carry a price, so the weighted pipeline is near-meaningless. Same
       shape of problem as above.
+- [ ] **Expected close dates are stale on 28 of 30 open deals** — 16 sit in March 2026. The
+      dashboard nudges about it rather than ranking by it. Until they are refreshed, no
+      close-date-driven forecasting is possible.
+- [ ] **Only Ryan and Robert own anything.** Jon Beale, Bob Mulligan and Victor Melo own no deals,
+      accounts or buildings, so their personal dashboard section is empty. Assign owners before
+      inviting them, or their first impression of the CRM is three empty panels.
+- [ ] The `WIN RATE` formula in cell H5 of `0-Dashboard` — its 86% matches none of the four
+      denominators the data supports. Needed to close the last reconciliation gap.
+- [ ] The rest of the daily briefing (Meetings Today, Client Matches) needs Granola and calendar
+      integrations — Phase 7.
 
 **Review when convenient:**
 - [x] ~~`lead_sources` placeholders~~ — replaced 2026-08-13 with the eight real sources from the Source column. The five placeholders are **deactivated, not deleted**, because `lead_source_id` has no ON DELETE.
@@ -571,6 +605,10 @@ in a car park.
 | 2026-08-13 | Revenue growth leads with **MRR over time**, and the waterfall's four columns sit in a table beneath it that says when three of them are structurally zero | All 11 contract periods are open and none has ever been superseded, so expansion, contraction and churn are $0 in all 27 months. Three empty columns read as a broken report; a sentence saying "every change so far is new business" reads as an honest one |
 | 2026-08-13 | Still no Recharts, now that there is a real time series | 27 months of MRR is `MonthBars` — flex columns with percentage heights, ~30 lines. A ~100kb dependency that then needs overriding to match the hairline design still earns nothing. Revisit only if a report needs two series on one axis |
 | 2026-08-13 | `grant … on all tables` was re-run and backed by `alter default privileges` | The original grant was a snapshot taken mid-migration, so six objects created afterwards — including `v_opportunity_outcomes`, which a later migration drops and recreates — were never visible to `authenticated`. Hosted Supabase's own defaults hid the bug entirely. `db:verify` now asserts every view is selectable, which is the check that would have caught it |
+| 2026-08-13 | **Top focus and next follow-up are derived, never typed** | The spreadsheet's version was a line Ryan wrote himself each morning. Asking five people who have never used a CRM to maintain a to-do list inside one is how you get a CRM nobody opens — required fields are the enemy, and a required *sentence* is worse. If the data can rank it, the app ranks it |
+| 2026-08-13 | Top focus ranks by **stage**, not by expected close date | The obvious ranking was close date, and the data killed it: only 2 of 30 open deals have one in the future and 16 cluster in a month five months gone, so every row would have read "165 days late" — noise, not a priority. Stage is populated on every deal and genuinely means something, so furthest-along-first is the one honest ranking available. The overdue count is still surfaced, as a nudge to fix the dates rather than as the ordering |
+| 2026-08-13 | The company tiles stayed company-wide, with the personal section **above** them | "The dashboard should be on a per user basis" could have meant filtering all six tiles. It did not: those six mirror tab 0, which Ryan had confirmed minutes earlier, and all five people see all data by design. The personal part is additive — *what needs me* on top, *how are we doing* underneath |
+| 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

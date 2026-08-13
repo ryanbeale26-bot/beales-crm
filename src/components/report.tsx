@@ -164,6 +164,34 @@ export function Delta({ value }: { value: number }) {
   )
 }
 
+/**
+ * The traffic light from the spreadsheet's client-health summary.
+ *
+ * These three are the one place in the app that uses colour semantically
+ * rather than from the brand palette — a green/amber/red health signal is what
+ * the team already reads, and navy-on-navy cannot carry that meaning. It stays
+ * within the rules because they are dots, never text: the label sits beside
+ * them in normal charcoal, so nothing depends on seeing the colour.
+ */
+const HEALTH_DOT: Record<string, string> = {
+  healthy: '#2E7D52',
+  needs_attention: 'var(--brand-gold)',
+  at_risk: '#B3261E',
+}
+
+export function HealthDot({ score }: { score: string | null }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-2 shrink-0 rounded-full"
+      style={{
+        backgroundColor: score ? (HEALTH_DOT[score] ?? 'transparent') : 'transparent',
+        boxShadow: score ? undefined : 'inset 0 0 0 1px rgba(27,58,107,0.35)',
+      }}
+    />
+  )
+}
+
 /** Count the rows in a list by a key, biggest first. */
 export function rank<T>(rows: T[], key: (row: T) => string | null) {
   const counts = new Map<string, number>()
