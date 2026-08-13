@@ -12,7 +12,7 @@ export type FieldDef = {
   match: string[]
 }
 
-export type ImporterKey = 'active-clients' | 'contacts' | 'activities'
+export type ImporterKey = 'active-clients' | 'contacts' | 'activities' | 'pipeline' | 'won-lost'
 
 export type ImporterDef = {
   key: ImporterKey
@@ -67,6 +67,56 @@ export const IMPORTERS: Record<ImporterKey, ImporterDef> = {
       { key: 'outcome', label: 'Outcome', hint: 'Kept in the notes', match: ['outcome'] },
       { key: 'nextStep', label: 'Next step', hint: 'Kept in the notes', match: ['next step', 'next action'] },
       { key: 'owner', label: 'Owner', match: ['owner'] },
+    ],
+  },
+  pipeline: {
+    key: 'pipeline',
+    label: 'Pipeline → deals',
+    description:
+      'One row per deal. The stage has to match one of the stages on the board exactly, so a row whose stage is unrecognised is reported rather than parked somewhere convenient.',
+    sheetHint: 'pipeline',
+    fields: [
+      {
+        key: 'company',
+        label: 'Company',
+        hint: 'Split on the em-dash, then matched against existing accounts and buildings',
+        match: ['company', 'client'],
+      },
+      { key: 'stage', label: 'Stage', match: ['stage'] },
+      { key: 'monthlyValue', label: 'Monthly value', match: ['est. mo. value', 'mo. value', 'monthly'] },
+      { key: 'annualValue', label: 'Annual value', match: ['est. annual', 'annual'] },
+      { key: 'segment', label: 'Segment', match: ['segment'] },
+      { key: 'source', label: 'Source', match: ['source'] },
+      { key: 'owner', label: 'Owner', match: ['owner'] },
+      { key: 'contact', label: 'Contact name', match: ['contact name', 'contact'] },
+      { key: 'title', label: 'Contact title', match: ['title'] },
+      { key: 'email', label: 'Contact email', match: ['email'] },
+      { key: 'phone', label: 'Contact phone', match: ['phone'] },
+      { key: 'followUpDate', label: 'Follow-up date', hint: 'Becomes the expected close date', match: ['follow-up date', 'follow up date', 'follow'] },
+      { key: 'lastActivity', label: 'Last activity', match: ['last activity'] },
+      { key: 'nextAction', label: 'Next action', hint: 'Kept in the notes', match: ['next action', 'next step'] },
+      { key: 'notes', label: 'Notes', match: ['notes'] },
+    ],
+  },
+  'won-lost': {
+    key: 'won-lost',
+    label: 'Won/Loss Analysis → close details',
+    description:
+      'Fills in close dates, loss reasons and competitors on deals the Pipeline import already created. Only a row that matches nothing creates a new deal, and the preview says which is which.',
+    sheetHint: 'won-lost',
+    fields: [
+      { key: 'company', label: 'Company', hint: 'Matched against the deals already imported', match: ['company', 'client'] },
+      { key: 'outcome', label: 'Won or lost', match: ['won or lost', 'won', 'outcome'] },
+      { key: 'closeDate', label: 'Close date', match: ['close date'] },
+      { key: 'annualValue', label: 'Annual value', match: ['annual value', 'annual'] },
+      { key: 'lossReason', label: 'If lost: why', match: ['if lost: why', 'why'] },
+      { key: 'competitor', label: 'If lost: who won', match: ['if lost: who won', 'who won'] },
+      { key: 'tippedTheWin', label: 'Tipped the win', match: ['tipped'] },
+      { key: 'daysToClose', label: 'Days to close', hint: 'Used with the close date to work out when the deal opened', match: ['days to close', 'days'] },
+      { key: 'source', label: 'Source', match: ['source'] },
+      { key: 'segment', label: 'Segment', match: ['segment'] },
+      { key: 'contact', label: 'Contact', match: ['contact'] },
+      { key: 'notes', label: 'Notes', match: ['notes'] },
     ],
   },
   contacts: {

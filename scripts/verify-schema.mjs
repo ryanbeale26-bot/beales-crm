@@ -384,6 +384,132 @@ async function main() {
   check('the change records where it came from', stageEvents2.rows[1]?.from_stage_id !== null)
 
   // ---------------------------------------------------------------------------
+  console.log('\nClosing and reopening a deal')
+
+  const OPP = '55555555-5555-5555-5555-555555555555'
+  const WON = `(select id from pipeline_stages where name = 'Closed Won')`
+
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    update opportunities set stage_id = ${WON} where id = '${OPP}';
+  `)
+  const closed = await db.query(`select actual_close_date from opportunities where id = '${OPP}'`)
+  check('winning a deal stamps the close date', closed.rows[0]?.actual_close_date != null)
+
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    update opportunities set stage_id = (select id from pipeline_stages where name = 'RFP Sent')
+    where id = '${OPP}';
+  `)
+  const reopened = await db.query(`select actual_close_date from opportunities where id = '${OPP}'`)
+  check('reopening a deal clears the close date', reopened.rows[0]?.actual_close_date == null)
+
+  // The thirteen rows from the Won/Loss tab arrive already closed, with a real
+  // date on them. The trigger must not overwrite it with today.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into opportunities (id, name, stage_id, opened_on, actual_close_date, monthly_value)
+    select '55555555-5555-5555-5555-555555555556', 'Imported win', id,
+           current_date - 200, current_date - 90, 4000
+    from pipeline_stages where name = 'Closed Won';
+  `)
+  const imported = await db.query(`
+    select (actual_close_date = current_date - 90) as kept
+    from opportunities where id = '55555555-5555-5555-5555-555555555556'
+  `)
+  check('importing a closed deal keeps its own close date', imported.rows[0]?.kept === true)
+
+  // ---------------------------------------------------------------------------
+  console.log('\nA won deal becomes a building')
+
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    update opportunities set stage_id = ${WON}, monthly_value = 7000 where id = '${OPP}';
+  `)
+  const converted = await db.query(`
+    select convert_opportunity_to_building(
+      '${OPP}', null, 'Converted Demo Holdings', 'Converted Tower', 7000, current_date
+    ) as building_id
+  `)
+  check('converting a won deal returns a building', Boolean(converted.rows[0]?.building_id))
+
+  const linked = await db.query(`
+    select a.status as account_status, b.status as building_status, p.monthly_value
+    from opportunities o
+    join buildings b on b.id = o.building_id
+    join accounts  a on a.id = o.account_id
+    join building_contract_periods p on p.building_id = b.id and p.end_date is null
+    where o.id = '${OPP}'
+  `)
+  check('the deal is linked to its new building and account', linked.rows.length === 1)
+  check('a converted deal opens the account as a customer', linked.rows[0]?.account_status === 'active')
+  check('the new building opens with a contract period', Number(linked.rows[0]?.monthly_value) === 7000)
+
+  const noBatchStamp = await db.query(`
+    select b.import_batch_id from opportunities o
+    join buildings b on b.id = o.building_id where o.id = '${OPP}'
+  `)
+  check('the new building carries no import batch', noBatchStamp.rows[0]?.import_batch_id == null)
+
+  const convertedTwice = await db
+    .exec(`select convert_opportunity_to_building('${OPP}', null, 'Second try')`)
+    .then(() => false)
+    .catch(() => true)
+  check('a deal cannot be converted twice', convertedTwice)
+
+  const reopenConverted = await db
+    .exec(
+      `update opportunities set stage_id = (select id from pipeline_stages where name = 'RFP Sent')
+       where id = '${OPP}'`,
+    )
+    .then(() => false)
+    .catch(() => true)
+  check('a converted deal cannot be quietly reopened', reopenConverted)
+
+  const openDealConverted = await db
+    .exec(
+      `insert into opportunities (id, name, stage_id)
+       select '55555555-5555-5555-5555-555555555557', 'Still open', id
+       from pipeline_stages where name = 'Targeting';
+       select convert_opportunity_to_building('55555555-5555-5555-5555-555555555557', null, 'Nope');`,
+    )
+    .then(() => false)
+    .catch(() => true)
+  check('an open deal cannot be converted', openDealConverted)
+
+  // ---------------------------------------------------------------------------
+  console.log('\nPipeline reporting')
+
+  const funnel = await db.query('select stage_name, deal_count, is_open from v_pipeline_funnel')
+  check(
+    'the funnel shows every stage, including the empty ones',
+    funnel.rows.length >= 8,
+    `${funnel.rows.length} stages`,
+  )
+  check(
+    'the funnel separates open stages from closed',
+    funnel.rows.some((r) => r.is_open) && funnel.rows.some((r) => !r.is_open),
+  )
+
+  const outcomes = await db.query('select won, days_to_close from v_opportunity_outcomes')
+  check('closed deals appear in the outcomes view', outcomes.rows.length >= 2)
+  check(
+    'the sales cycle is measured from opened_on, not from the import',
+    outcomes.rows.some((r) => Number(r.days_to_close) > 100),
+    JSON.stringify(outcomes.rows),
+  )
+
+  const durations = await db.query(
+    `select is_current, days_in_stage from v_opportunity_stage_durations
+     where opportunity_id = '${OPP}' order by entered_at`,
+  )
+  check('stage history reports a duration per stage', durations.rows.length >= 3)
+  check(
+    'only the latest stage is the current one',
+    durations.rows.filter((r) => r.is_current).length === 1,
+  )
+
+  // ---------------------------------------------------------------------------
   console.log('\nAudit log')
 
   await db.exec(`
@@ -499,6 +625,27 @@ async function main() {
   )
   check('everyone can read deal stages', victorReadsStages.rows[0].n >= 2)
 
+  const victorAddsWinReason = await asUser(db, VICTOR, () =>
+    db
+      .exec(`insert into win_reasons (name) values ('Sneaky reason')`)
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('a non-admin cannot add a win reason', victorAddsWinReason)
+
+  // Competitors are deliberately NOT admin-only: someone losing a deal has to be
+  // able to name who beat them there and then, not wait for an admin.
+  const victorAddsCompetitor = await asUser(db, VICTOR, () =>
+    db
+      .exec(`insert into competitors (name) values ('Rival Cleaning Co')`)
+      .then(() => true)
+      .catch((e) => {
+        console.log(`        ${e.message}`)
+        return false
+      }),
+  )
+  check('anyone can name a competitor who beat them', victorAddsCompetitor)
+
   // ---------------------------------------------------------------------------
   console.log('\nEveryday sharing')
 
@@ -516,10 +663,18 @@ async function main() {
   )
   check('any member can log an activity', victorWritesActivity)
 
+  // Compared against what an admin sees rather than a fixed number: everyone is
+  // meant to see all the data, and a hardcoded count only breaks whenever a test
+  // above it creates another account.
+  const allAccounts = await db.query('select count(*)::int as n from accounts')
   const victorReadsAccounts = await asUser(db, VICTOR, () =>
     db.query('select count(*)::int as n from accounts'),
   )
-  check('any member can read accounts', victorReadsAccounts.rows[0].n === 1)
+  check(
+    'any member sees every account',
+    victorReadsAccounts.rows[0].n === allAccounts.rows[0].n && allAccounts.rows[0].n > 0,
+    `saw ${victorReadsAccounts.rows[0].n} of ${allAccounts.rows[0].n}`,
+  )
 
   await db.exec(`update profiles set is_active = false where id = '${VICTOR}';`)
   const deactivated = await asUser(db, VICTOR, () =>
@@ -555,7 +710,7 @@ async function main() {
   check('seed creates demo accounts', seeded.rows[0].accounts === 3, JSON.stringify(seeded.rows[0]))
   check('seed creates demo buildings', seeded.rows[0].buildings === 4, JSON.stringify(seeded.rows[0]))
   check('seed creates demo contacts', seeded.rows[0].contacts === 2, JSON.stringify(seeded.rows[0]))
-  check('seed creates a demo opportunity', seeded.rows[0].opportunities === 1)
+  check('seed creates demo opportunities', seeded.rows[0].opportunities === 3)
 
   const seedHistory = await db.query(`
     select count(*)::int as n from building_contract_periods

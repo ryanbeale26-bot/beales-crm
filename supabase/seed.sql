@@ -57,14 +57,51 @@ insert into employee_assignment_rates (assignment_id, pay_rate, bill_rate) value
   ('eeeeeeee-0000-4000-8000-000000000002', 24.00, 38.00)
 on conflict (assignment_id) do nothing;
 
-insert into opportunities (id, name, account_id, city, state, stage_id, monthly_value, expected_close_date)
+insert into opportunities (id, name, account_id, city, state, stage_id, monthly_value,
+                           opened_on, expected_close_date)
 select
   'ffffffff-0000-4000-8000-000000000001',
   'Placeholder Labs — nightly cleaning',
   'aaaaaaaa-0000-4000-8000-000000000003',
   'Cambridge', 'MA',
-  id, 9500, current_date + interval '45 days'
+  id, 9500,
+  (current_date - interval '40 days')::date,
+  current_date + interval '45 days'
 from pipeline_stages where name = 'RFP Sent'
+on conflict (id) do nothing;
+
+-- One won and one lost, so the pipeline report is not an empty state in
+-- development. Both carry a real opened_on, because a zero-day sales cycle would
+-- make the report look broken when it isn't.
+insert into opportunities (id, name, account_id, city, state, stage_id, monthly_value,
+                           opened_on, actual_close_date, win_notes, lead_source_id)
+select
+  'ffffffff-0000-4000-8000-000000000002',
+  'Demo Property Group — 3 Example Plaza',
+  'aaaaaaaa-0000-4000-8000-000000000001',
+  'Boston', 'MA',
+  id, 7500,
+  (current_date - interval '150 days')::date,
+  (current_date - interval '30 days')::date,
+  'Sample record — the night crew missed three Fridays and the manager had had enough.',
+  (select id from lead_sources where name = 'Referral')
+from pipeline_stages where name = 'Closed Won'
+on conflict (id) do nothing;
+
+insert into opportunities (id, name, city, state, stage_id, monthly_value,
+                           opened_on, actual_close_date, loss_reason_id, competitor_id,
+                           incumbent_provider)
+select
+  'ffffffff-0000-4000-8000-000000000003',
+  'Example Office Park — nightly cleaning',
+  'Quincy', 'MA',
+  id, 5200,
+  (current_date - interval '210 days')::date,
+  (current_date - interval '60 days')::date,
+  (select id from loss_reasons where name = 'Lost to competitor'),
+  (select id from competitors  where name = 'Janitronics'),
+  'Sample Incumbent Services'
+from pipeline_stages where name = 'Closed Lost'
 on conflict (id) do nothing;
 
 insert into activities (activity_type_id, subject, body, building_id, occurred_at)

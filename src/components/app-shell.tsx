@@ -10,15 +10,17 @@ import { cn } from '@/lib/utils'
 
 const NAV = [
   { label: 'Dashboard', href: '/dashboard', icon: '◈' },
+  { label: 'Pipeline', href: '/opportunities', icon: '◆' },
   { label: 'Accounts', href: '/accounts', icon: '◇' },
   { label: 'Buildings', href: '/buildings', icon: '▤' },
   { label: 'Contacts', href: '/contacts', icon: '☺' },
   { label: 'Employees', href: '/employees', icon: '⚑' },
   { label: 'Activity', href: '/activity', icon: '≡' },
+  { label: 'Reports', href: '/reports/pipeline', icon: '◱' },
   { label: 'Import', href: '/admin/import', icon: '↥' },
 ]
 
-const LATER = ['Opportunities', 'Projects', 'Reports']
+const LATER = ['Projects']
 
 export function AppShell({
   displayName,

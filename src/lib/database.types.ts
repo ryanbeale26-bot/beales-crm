@@ -276,6 +276,13 @@ export type Database = {
             foreignKeyName: "activities_opportunity_id_fkey"
             columns: ["opportunity_id"]
             isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "activities_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
             referencedRelation: "v_weighted_pipeline"
             referencedColumns: ["opportunity_id"]
           },
@@ -749,6 +756,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "buildings_lost_to_competitor_id_fkey"
+            columns: ["lost_to_competitor_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["competitor_id"]
+          },
+          {
             foreignKeyName: "buildings_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
@@ -761,6 +775,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "property_types"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_property_type_id_fkey"
+            columns: ["property_type_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["property_type_id"]
           },
           {
             foreignKeyName: "buildings_secondary_owner_id_fkey"
@@ -1476,6 +1497,7 @@ export type Database = {
           loss_reason_id: string | null
           monthly_value: number | null
           name: string
+          opened_on: string | null
           owner_id: string | null
           postal_code: string | null
           property_type_id: string | null
@@ -1485,6 +1507,8 @@ export type Database = {
           stage_id: string
           state: string | null
           updated_at: string
+          win_notes: string | null
+          win_reason_id: string | null
         }
         Insert: {
           account_id?: string | null
@@ -1507,6 +1531,7 @@ export type Database = {
           loss_reason_id?: string | null
           monthly_value?: number | null
           name: string
+          opened_on?: string | null
           owner_id?: string | null
           postal_code?: string | null
           property_type_id?: string | null
@@ -1516,6 +1541,8 @@ export type Database = {
           stage_id: string
           state?: string | null
           updated_at?: string
+          win_notes?: string | null
+          win_reason_id?: string | null
         }
         Update: {
           account_id?: string | null
@@ -1538,6 +1565,7 @@ export type Database = {
           loss_reason_id?: string | null
           monthly_value?: number | null
           name?: string
+          opened_on?: string | null
           owner_id?: string | null
           postal_code?: string | null
           property_type_id?: string | null
@@ -1547,6 +1575,8 @@ export type Database = {
           stage_id?: string
           state?: string | null
           updated_at?: string
+          win_notes?: string | null
+          win_reason_id?: string | null
         }
         Relationships: [
           {
@@ -1599,6 +1629,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "opportunities_competitor_id_fkey"
+            columns: ["competitor_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["competitor_id"]
+          },
+          {
             foreignKeyName: "opportunities_import_batch_id_fkey"
             columns: ["import_batch_id"]
             isOneToOne: false
@@ -1634,6 +1671,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "opportunities_property_type_id_fkey"
+            columns: ["property_type_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["property_type_id"]
+          },
+          {
             foreignKeyName: "opportunities_secondary_owner_id_fkey"
             columns: ["secondary_owner_id"]
             isOneToOne: false
@@ -1645,6 +1689,27 @@ export type Database = {
             columns: ["stage_id"]
             isOneToOne: false
             referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunities_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["stage_id"]
+          },
+          {
+            foreignKeyName: "opportunities_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_pipeline_funnel"
+            referencedColumns: ["stage_id"]
+          },
+          {
+            foreignKeyName: "opportunities_win_reason_id_fkey"
+            columns: ["win_reason_id"]
+            isOneToOne: false
+            referencedRelation: "win_reasons"
             referencedColumns: ["id"]
           },
         ]
@@ -1690,11 +1755,32 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "opportunity_stage_events_from_stage_id_fkey"
+            columns: ["from_stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["stage_id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_from_stage_id_fkey"
+            columns: ["from_stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_pipeline_funnel"
+            referencedColumns: ["stage_id"]
+          },
+          {
             foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
             columns: ["opportunity_id"]
             isOneToOne: false
             referencedRelation: "opportunities"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["opportunity_id"]
           },
           {
             foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
@@ -1709,6 +1795,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_to_stage_id_fkey"
+            columns: ["to_stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["stage_id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_to_stage_id_fkey"
+            columns: ["to_stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_pipeline_funnel"
+            referencedColumns: ["stage_id"]
           },
         ]
       }
@@ -2115,6 +2215,27 @@ export type Database = {
           },
         ]
       }
+      win_reasons: {
+        Row: {
+          id: string
+          is_active: boolean
+          name: string
+          sort_order: number
+        }
+        Insert: {
+          id?: string
+          is_active?: boolean
+          name: string
+          sort_order?: number
+        }
+        Update: {
+          id?: string
+          is_active?: boolean
+          name?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
       work_orders: {
         Row: {
           building_id: string | null
@@ -2345,6 +2466,13 @@ export type Database = {
             referencedRelation: "property_types"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "buildings_property_type_id_fkey"
+            columns: ["property_type_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["property_type_id"]
+          },
         ]
       }
       v_building_scheduled_hours: {
@@ -2399,6 +2527,163 @@ export type Database = {
         }
         Relationships: []
       }
+      v_opportunity_outcomes: {
+        Row: {
+          account_id: string | null
+          actual_close_date: string | null
+          annual_value: number | null
+          building_id: string | null
+          closed_month: string | null
+          competitor: string | null
+          competitor_id: string | null
+          days_to_close: number | null
+          entity: Database["public"]["Enums"]["operating_entity"] | null
+          incumbent_provider: string | null
+          lead_source: string | null
+          loss_reason: string | null
+          loss_reason_id: string | null
+          monthly_value: number | null
+          name: string | null
+          opened_on: string | null
+          opportunity_id: string | null
+          owner_id: string | null
+          property_type: string | null
+          property_type_id: string | null
+          stage_id: string | null
+          stage_name: string | null
+          win_notes: string | null
+          win_reason: string | null
+          win_reason_id: string | null
+          won: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "opportunities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "opportunities_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_mrr_by_month"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "opportunities_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_opportunity_stage_durations: {
+        Row: {
+          days_in_stage: number | null
+          entered_at: string | null
+          is_current: boolean | null
+          left_at: string | null
+          opportunity_id: string | null
+          stage_event_id: string | null
+          stage_id: string | null
+          stage_name: string | null
+          stage_sort_order: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_weighted_pipeline"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_to_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_to_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["stage_id"]
+          },
+          {
+            foreignKeyName: "opportunity_stage_events_to_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "v_pipeline_funnel"
+            referencedColumns: ["stage_id"]
+          },
+        ]
+      }
+      v_pipeline_funnel: {
+        Row: {
+          annual_value: number | null
+          deal_count: number | null
+          deals_without_value: number | null
+          is_active: boolean | null
+          is_lost: boolean | null
+          is_open: boolean | null
+          is_won: boolean | null
+          monthly_value: number | null
+          next_expected_close: string | null
+          probability: number | null
+          stage_id: string | null
+          stage_name: string | null
+          stage_sort_order: number | null
+          weighted_annual_value: number | null
+        }
+        Relationships: []
+      }
       v_staff_movement: {
         Row: {
           employee_id: string | null
@@ -2413,13 +2698,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["to_building_id"]
-            isOneToOne: false
-            referencedRelation: "buildings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "buildings"
@@ -2429,8 +2707,8 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_current_value"
-            referencedColumns: ["building_id"]
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
@@ -2443,7 +2721,7 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_hours"
+            referencedRelation: "v_building_current_value"
             referencedColumns: ["building_id"]
           },
           {
@@ -2456,13 +2734,20 @@ export type Database = {
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["from_building_id"]
+            columns: ["to_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
@@ -2514,6 +2799,17 @@ export type Database = {
       close_building_contract: {
         Args: { p_building_id: string; p_lost_date?: string }
         Returns: undefined
+      }
+      convert_opportunity_to_building: {
+        Args: {
+          p_account_id?: string
+          p_account_name?: string
+          p_building_name?: string
+          p_effective_date?: string
+          p_monthly_value?: number
+          p_opportunity_id: string
+        }
+        Returns: string
       }
       is_admin: { Args: never; Returns: boolean }
       is_member: { Args: never; Returns: boolean }

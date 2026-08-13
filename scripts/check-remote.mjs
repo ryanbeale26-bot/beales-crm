@@ -17,7 +17,7 @@ const check = (name, ok, detail = '') => {
 }
 
 console.log('\nSecurity: a stranger with the public key')
-for (const table of ['accounts', 'buildings', 'contacts', 'activities', 'employees']) {
+for (const table of ['accounts', 'buildings', 'contacts', 'activities', 'employees', 'opportunities']) {
   const { data, error } = await anon.from(table).select('*').limit(1)
   check(`${table} is not readable when signed out`, (data?.length ?? 0) === 0, error ? '' : 'returned rows!')
 }
@@ -27,16 +27,31 @@ for (const table of ['accounts', 'buildings', 'contacts', 'activities', 'employe
 }
 
 console.log('\nReference data')
-const expected = { activity_types: 8, project_types: 10, property_types: 11, pipeline_stages: 8, loss_reasons: 8, lead_sources: 6 }
-for (const [table, n] of Object.entries(expected)) {
+// [total rows, rows still active]. The two differ where a placeholder was
+// retired rather than deleted — deleting a row anything points at is not
+// possible, so retired lead sources stay on the table switched off.
+const expected = {
+  activity_types: [8, 8],
+  project_types: [10, 10],
+  property_types: [11, 11],
+  pipeline_stages: [8, 8],
+  loss_reasons: [9, 9],
+  lead_sources: [13, 8],
+  win_reasons: [0, 0],
+}
+for (const [table, [rows, active]] of Object.entries(expected)) {
   const { count, error } = await admin.from(table).select('*', { count: 'exact', head: true })
-  check(`${table} has ${n} rows`, count === n, error ? error.message : `got ${count}`)
+  check(`${table} has ${rows} rows`, count === rows, error ? error.message : `got ${count}`)
+  const { count: live } = await admin
+    .from(table).select('*', { count: 'exact', head: true }).eq('is_active', true)
+  check(`${table} has ${active} active`, live === active, `got ${live}`)
 }
 
 console.log('\nEvery table exists and is readable')
 for (const table of ['accounts', 'buildings', 'building_contract_periods', 'contacts',
                      'contact_buildings', 'employees', 'employee_assignments',
-                     'employee_assignment_rates', 'opportunities', 'activities',
+                     'employee_assignment_rates', 'opportunities',
+                     'opportunity_stage_events', 'win_reasons', 'activities',
                      'projects', 'attachments', 'staffing_reports', 'inspections',
                      'work_orders', 'audit_log', 'import_batches']) {
   // Row counts are reported, not asserted — there is real data in here now.
@@ -55,7 +70,9 @@ console.log('\nThe team')
 
 console.log('\nRevenue views')
 for (const view of ['v_building_current_value', 'v_building_mrr_by_month', 'v_account_mrr_by_month',
-                    'v_mrr_waterfall', 'v_weighted_pipeline', 'v_staff_movement', 'v_building_labor_margin']) {
+                    'v_mrr_waterfall', 'v_weighted_pipeline', 'v_staff_movement', 'v_building_labor_margin',
+                    'v_building_hours', 'v_building_scheduled_hours',
+                    'v_pipeline_funnel', 'v_opportunity_outcomes', 'v_opportunity_stage_durations']) {
   const { error } = await admin.from(view).select('*').limit(1)
   check(`${view}`, !error, error?.message)
 }

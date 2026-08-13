@@ -57,7 +57,7 @@ export default async function AccountPage({
   if (error) throw new Error(`Could not load this account: ${error.message}`)
   if (!account) notFound()
 
-  const [{ data: buildings }, { data: values }, { data: contacts }] = await Promise.all([
+  const [{ data: buildings }, { data: values }, { data: contacts }, { data: deals }] = await Promise.all([
     supabase
       .from('buildings')
       .select('id, name, city, state, status, entity, square_footage, health_score')
@@ -71,6 +71,12 @@ export default async function AccountPage({
       .eq('account_id', id)
       .is('deleted_at', null)
       .order('last_name'),
+    supabase
+      .from('opportunities')
+      .select('id, name, monthly_value, expected_close_date, stage:pipeline_stages(name, is_won, is_lost)')
+      .eq('account_id', id)
+      .is('deleted_at', null)
+      .order('monthly_value', { ascending: false, nullsFirst: false }),
   ])
 
   const valueByBuilding = new Map(
@@ -234,11 +240,46 @@ export default async function AccountPage({
 
       {tab === 'Activity' && <ActivityTimeline scope={{ accountId: id }} />}
 
-      {tab === 'Opportunities' && (
-        <EmptyState title="The pipeline arrives in Phase 3.">
-          Deals for this account will show here, with the stage they&rsquo;re in.
-        </EmptyState>
-      )}
+      {tab === 'Opportunities' &&
+        (deals && deals.length > 0 ? (
+          <RowList>
+            {deals.map((d) => (
+              <Row
+                key={d.id}
+                href={`/opportunities/${d.id}`}
+                title={d.name}
+                meta={d.expected_close_date ? `Expected ${date(d.expected_close_date)}` : undefined}
+                badges={
+                  <span
+                    className={cn(
+                      'rounded-[3px] px-1.5 py-0.5 text-xs',
+                      d.stage?.is_lost
+                        ? 'text-destructive bg-destructive/10'
+                        : d.stage?.is_won
+                          ? 'bg-brand-gold/30 text-foreground'
+                          : 'text-muted-foreground bg-muted',
+                    )}
+                  >
+                    {d.stage?.name}
+                  </span>
+                }
+                right={
+                  d.monthly_value ? (
+                    `${money(d.monthly_value)}/mo`
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )
+                }
+              />
+            ))}
+          </RowList>
+        ) : (
+          <EmptyState title="No deals on this account yet.">
+            <Link href={`/opportunities/new?account=${id}`} className="underline">
+              Add one
+            </Link>
+          </EmptyState>
+        ))}
     </div>
   )
 }

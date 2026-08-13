@@ -170,7 +170,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 1a** — Migrations applied, six profiles created, accounts / buildings / contacts CRUD, account detail page with tabs
 - [x] **Phase 1b** — Importer built (upload → map columns → preview → confirm → undo). Tabs 2 and 3 supported; **not yet run for real**
 - [x] **Phase 2** — Quick-add logging, timelines, activity feed with filters, activity importer. Tab 4 **not yet imported for real**
-- [ ] **Phase 3** — Opportunities kanban, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report. Migrate tabs 1 and 5.
+- [x] **Phase 3** — Opportunities board, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report, admin reference-data editor. Importers for tabs 1 and 5 built and rehearsed; **the real imports are Ryan's to run**
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects
 - [ ] **Phase 5** — Revenue views in Postgres, dashboard (mirror tab 0 first), six reports with CSV export
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
@@ -178,8 +178,21 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 2 built and self-tested. Ryan has imported tabs 2 and 3 for real (22 accounts, 38 buildings, 97 contacts). Tab 4 is ready but not yet imported.
-**Last session:** 2026-08-12
+**Phase:** 3 built and self-tested. Ryan has imported tabs 2, 3 **and 4** for real — 22 accounts,
+38 buildings, 97 contacts, 667 activities. Tabs 1 and 5 have working importers, rehearsed end to
+end against the real workbook and rolled back; **the real pipeline import has not been run.**
+**Last session:** 2026-08-13
+
+**Correction to earlier notes:** tab 4 *has* been imported (667 activities, batch committed
+2026-08-12), and there is a **sixth profile — Brendan Mulligan** (`Brendan.Mulligan@bealesllc.com`,
+leadership, no rate access, currently inactive). Earlier versions of this file said neither.
+
+**A real finding about the spreadsheet, worth remembering:** `5 - Won-Lost Analysis` has its
+summary row at **row 18**, and rows **19 and 20 sit below it** — two Ciminelli wins at $104,772
+each, closed 2026-03-28. Every formula in that summary is hardcoded to `D5:D15`, so the sheet
+excludes **$209,544 of won ARR** from its own TOTAL WON ARR, win rate and average days to close.
+The real win rate is 12/13 (92.3%), not the 90.9% the sheet shows. The CRM counts all thirteen.
+Do not reproduce those formula ranges anywhere.
 
 **What works right now:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui. Login by
 password or magic link, verified end to end — Ryan signed in and reached the dashboard
@@ -233,7 +246,17 @@ How it works, if you need to change it:
 | `src/lib/import/definitions.ts` | What each importer needs, and the header fragments used to guess the mapping |
 | `src/lib/import/parse-rows.ts` | Splitting client names, parsing addresses, money, dates, health, owners |
 | `src/lib/import/active-clients.ts` | Row → proposed account/building/contact, with warnings |
+| `src/lib/import/pipeline.ts` | Tab 1 → opportunities. Stage must match exactly; source merge map |
+| `src/lib/import/won-lost.ts` | Tab 5 → close details on deals that already exist |
 | `src/app/(app)/admin/import/actions.ts` | Parse, preview, commit, roll back |
+
+Adding an importer touches five places, and three of them used to fail silently: the `ImporterKey`
+union and `IMPORTERS` in `definitions.ts`; a branch in `previewImport` (its last branch is a
+fall-through that ran the *contacts* builder for anything unrecognised); a `commitX` action; a
+counter on `CommitResult`; and in `importer.tsx` the preview block plus `handleCommit` — now a
+`switch` with a `default`, rather than the old ternary chain with the same fall-through. And
+`rollbackImport` hardcodes its table list, so a new table must be added there or undo leaves
+orphans.
 
 Rules baked in, worth keeping: the original `Service Scope` text is always stored on the
 building, so nothing the parser missed is lost; contract values go through
@@ -247,6 +270,48 @@ Shore Health entities arrive as separate accounts. Both are one rename each in t
 
 The building form's monthly value calls `set_building_monthly_value()`; never write to
 `building_contract_periods` directly.
+
+**What Phase 3 shipped.** `/opportunities` is a board (drag by the ⠿ grip, `@dnd-kit/core`) and a
+table, toggled by `?view=`. Under `md` the board becomes a grouped list with a stage dropdown per
+card — eight columns on a phone is not a board. `/opportunities/[id]` has Overview / Stage history
+/ Activity; `/reports/pipeline` is the funnel, win rate, sales cycle by segment, loss and win
+reasons ranked, and a competitor tally, all drawn as CSS bars rather than a chart library.
+`/admin/reference` lets an admin edit stages, probabilities, loss reasons, win reasons, lead
+sources and competitors without a migration.
+
+Two migrations: `20260813120000_pipeline.sql` and `20260813140000_outcome_view_tidy.sql`.
+
+| Thing | Why it is the way it is |
+|---|---|
+| `opportunities.opened_on`, **nullable** | The sales cycle needs a start date and `created_at` is not it — every imported deal is created in the same second, so measuring from it reports a zero-day cycle for all 64 historical deals, silently. Tab 5 gives a real answer (close date − days to close); tab 1 has no start date at all, so it stays null and the report counts those separately |
+| `win_reasons` ships **empty** | "Tipped the win" has to be rankable, so it is a lookup table — but the sheet's values are compound phrases, not categories. The Won/Loss importer offers the distinct phrases in the preview for Ryan to tick, rename and merge. Never seed this from imagination |
+| `stamp_opportunity_close_date()` is a **BEFORE** trigger | An AFTER trigger cannot assign to `NEW`, so it would need a second UPDATE — a second audit row for one drag of one card. It never overwrites a close date that is already there, so an imported deal keeps its real date |
+| Reopening a **converted** deal raises | Otherwise a live billing building sits under a deal that says it never closed. Unlink the building first |
+| `convert_opportunity_to_building()` is a DB function | Supabase gives the app no transaction. Four PostgREST calls means a failure between "create building" and "set value" leaves a building with no contract period — $0 MRR forever, with no screen to show it. The account *decision* still happens in TypeScript and is shown before anything is written |
+| Loss reason is **not** enforced by the database | The drag sets the stage before the dialog can collect anything, so a NOT NULL rule would make the drag itself fail. It is a UI prompt, and the deal still moves if you dismiss it |
+| Competitors stay writable by **everyone** | A design pass argued for admin-only. Someone closing a deal lost has to name who beat them there and then, not wait for an admin |
+| `v_opportunity_outcomes` hides the other side | A deal that went lost then won kept its loss reason — deliberate, since clearing reasons on a stage change destroys context. The columns keep it; the reporting view shows loss fields only on a loss and win fields only on a win |
+
+The two new importers follow the existing framework — `src/lib/import/pipeline.ts` and
+`src/lib/import/won-lost.ts`. Worth knowing:
+
+- The real tab names are `1 - Pipeline` and `5 - Won-Lost Analysis` — spaced hyphens, not slashes.
+- **Stage is a row error, not a guess.** `stage_id` is NOT NULL and there is no safe default;
+  parking an unrecognised deal in Targeting would quietly change the pipeline.
+- Source merges Ryan confirmed: `Direct` and `Cold Outreach` → Direct Outreach; every CBRE/Tufts
+  variant → CBRE Referral; both inbound RFP rows → Inbound RFP. Unmatched leaves it **null**,
+  never `Other`.
+- The four annual-only rows are **one-off project work**: no monthly value, flagged in the preview,
+  original figure kept in the notes. Never divided by twelve.
+- Tab 5 **enriches**: it matches on company name and updates the deal tab 1 already created. Only
+  an unmatched row inserts. **Undo therefore removes only the rows it created** — a deal it merely
+  filled in was never batch-stamped, so it keeps its close details. The preview says so.
+- `Days In Stage` and `Days Since Activity` both point at the same cell in the sheet, so they have
+  always computed the same number. Ignored; `opportunity_stage_events` makes it real from now on.
+
+Rehearsed against the real workbook: 51 deals at $89,062/mo, 9 matched to an account, 4 project
+rows, zero errors; then tab 5 updated 9 and created 4, skipping the summary row. Both rolled back,
+and the database was verified row-for-row identical to how it started.
 
 ### How to work in this repo
 
@@ -359,11 +424,13 @@ in a car park.
 - [ ] Can one building ever be billed to two accounts? Assumed no.
 
 **Review when convenient:**
-- [ ] `property_types`, `loss_reasons` and `lead_sources` are seeded with placeholders — see `20260812180100_reference_data.sql`. Replace with the real lists.
+- [x] ~~`lead_sources` placeholders~~ — replaced 2026-08-13 with the eight real sources from the Source column. The five placeholders are **deactivated, not deleted**, because `lead_source_id` has no ON DELETE.
+- [ ] `loss_reasons` are still mostly placeholders — `Lost to competitor` was added (the only loss with evidence) and `Other` pushed last, but the middle of the list is invented. Ryan can now fix it himself in `/admin/reference`.
+- [ ] `win_reasons` is empty by design. It fills up the first time the Won/Loss tab is imported for real and Ryan ticks the phrases he wants ranked.
 - [ ] Phase 2 decision: offline outbox for unsent activities (IndexedDB). Conflicts with the "no localStorage" rule; argued for in the Decision Log.
 
 **Later phases:**
-- [ ] Deal stage names — Phase 3. The seven seeded stages are placeholders; derive real ones from the stage column in tab `1-Pipeline`.
+- [x] ~~Deal stage names and probabilities~~ — all eight confirmed by Ryan 2026-08-13. `Hot Lead` 10% and `RFP Response` 50%, previously interpolated guesses, are the values he wants. They are editable in `/admin/reference`, so a change is data, not a migration.
 - [ ] `0-Dashboard` formulas or screenshot — needed before designing the Phase 5 dashboard.
 - [ ] Sender email addresses for the weekly payroll emails, plus 3–4 real samples before the parser is written — Phase 7.
 - [ ] InspectQA read-only credentials for `beales-inspections` (`illxdfvqvuwoqwbplgiy`) — Ryan provides at Phase 7. The project is identified; the credentials are not yet issued.
@@ -389,6 +456,16 @@ in a car park.
 | 2026-08-12 | `middleware.ts` → `proxy.ts` | Next 16 deprecated the middleware filename and prints a codemod notice. Greenfield project, so take the new name now |
 | 2026-08-12 | **InspectQA is `illxdfvqvuwoqwbplgiy` (`beales-inspections`), not `kbqivepqykccdyexgnhu`** | The original ref in this file was wrong and pointed at an abandoned project. Verified in the table editor: `beales-inspections` holds the inspection tables and is flagged PRODUCTION. Getting this wrong at Phase 7 would mean aiming a sync job at a live client system. Always verify by ref |
 | 2026-08-12 | `kbqivepqykccdyexgnhu` ("CRM - Beales and AFS") is a dead earlier attempt, to be retired | Ryan confirmed it is not live. Renaming it out of the way first, deleting once it has sat unused — a Supabase project delete is permanent |
+| 2026-08-13 | **`opened_on` is a nullable column, not derived from `created_at`** | Every deal imported from the spreadsheet is created within the same second, so a sales cycle measured from `created_at` reads zero days for all 64 historical deals — wrong, and wrong with no error. Null where the sheet genuinely does not say, and the report counts the unmeasurable ones out loud rather than averaging a lie |
+| 2026-08-13 | `win_reasons` is a lookup table that **ships empty**, with `win_notes` beside it | "Tipped the win" has to be rankable next to the loss reasons, and free text cannot be grouped. But the sheet's ten values are compound phrases, not categories, so seeding a list would repeat the placeholder mistake this phase cleaned up. The importer offers the real phrases for Ryan to curate in the preview |
+| 2026-08-13 | Closing a deal stamps `actual_close_date` from a **BEFORE** trigger, separate from the stage-event trigger | An AFTER trigger cannot assign to `NEW`, so it needs a second UPDATE, which writes a second audit row for one drag. Keeping it separate also stops the `security definer` stage-event function growing a second job |
+| 2026-08-13 | Reopening a deal clears its close date, but **raises** if the deal was already converted | Silently clearing it would leave a live, billing building underneath a deal that says it never closed. Loss and win reasons are deliberately *not* cleared: tidy-looking, and it throws away context on a mis-drag |
+| 2026-08-13 | `convert_opportunity_to_building()` lives in Postgres; the account match lives in TypeScript | Supabase gives the app no transaction, and a failure between creating the building and setting its value leaves a building with no contract period — invisible, and $0 MRR forever. Matching a name to an account is a guess, and a guess belongs where a person sees it first |
+| 2026-08-13 | A required loss reason is a **UI rule, not a constraint** | The drag sets the stage before any dialog can collect a reason, so a database rule would make the drag itself fail. Required fields are the enemy; the deal moves either way |
+| 2026-08-13 | Competitors stay writable by every member, unlike the other reference data | Reviewed and rejected making them admin-only. Someone closing a deal lost has to name who beat them at that moment, not raise it with an admin — and that is exactly the moment the information exists |
+| 2026-08-13 | Charts are CSS bars; no Recharts | Every chart in the pipeline report is a ranked horizontal bar. A ~100kb dependency that then needs overriding to match the hairline design earns nothing. Revisit only if Phase 5 needs a real time series |
+| 2026-08-13 | `@dnd-kit/core` for the board, with a `md` breakpoint that drops it entirely | It is the only option that works with mouse, touch **and** keyboard. But eight columns on a phone is a horizontal scroll with one card visible, so below `md` the same deals render as a grouped list with a stage dropdown — which is faster than dragging anyway |
+| 2026-08-13 | `DndContext` carries a fixed `id` | dnd-kit numbers its generated `aria-describedby` from a counter that restarts on the client, so it never matched the server and React reported a hydration failure on every load of the board |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

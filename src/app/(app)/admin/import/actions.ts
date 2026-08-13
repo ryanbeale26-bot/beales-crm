@@ -11,6 +11,8 @@ import {
 } from '@/lib/import/active-clients'
 import { buildActivitiesProposal, type ProposedActivity } from '@/lib/import/activities'
 import { IMPORTERS, guessMapping, type ImporterKey } from '@/lib/import/definitions'
+import { buildPipelineProposal, type ProposedDeal } from '@/lib/import/pipeline'
+import { buildWonLostProposal, mapLossReason, type ProposedOutcome } from '@/lib/import/won-lost'
 import type { Json } from '@/lib/database.types'
 import { readWorkbook } from '@/lib/import/workbook'
 import { createClient } from '@/lib/supabase/server'
@@ -96,6 +98,8 @@ export type PreviewResult =
       skipped: SkippedRow[]
     }
   | { ok: true; kind: 'contacts'; contacts: ProposedContact[]; skipped: SkippedRow[] }
+  | { ok: true; kind: 'pipeline'; deals: ProposedDeal[]; skipped: SkippedRow[] }
+  | { ok: true; kind: 'won-lost'; outcomes: ProposedOutcome[]; skipped: SkippedRow[] }
   | { ok: true; kind: 'activities'; activities: ProposedActivity[]; skipped: SkippedRow[] }
 
 /**
@@ -144,6 +148,32 @@ export async function previewImport(formData: FormData): Promise<PreviewResult> 
     return { ok: true, kind: 'activities', activities, skipped }
   }
 
+  if (importerKey === 'pipeline') {
+    const [{ data: accounts }, { data: buildings }, { data: stages }] = await Promise.all([
+      supabase.from('accounts').select('id, name').is('deleted_at', null),
+      supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
+      supabase.from('pipeline_stages').select('id, name, is_won'),
+    ])
+    const { deals, skipped } = buildPipelineProposal(sheet.rows, sheet.rowNumbers, mapping, {
+      accounts: accounts ?? [],
+      buildings: buildings ?? [],
+      stages: stages ?? [],
+      profiles: profiles ?? [],
+    })
+    return { ok: true, kind: 'pipeline', deals, skipped }
+  }
+
+  if (importerKey === 'won-lost') {
+    const { data: opportunities } = await supabase
+      .from('opportunities')
+      .select('id, name')
+      .is('deleted_at', null)
+    const { outcomes, skipped } = buildWonLostProposal(sheet.rows, sheet.rowNumbers, mapping, {
+      opportunities: opportunities ?? [],
+    })
+    return { ok: true, kind: 'won-lost', outcomes, skipped }
+  }
+
   const { contacts, skipped } = buildContactsProposal(sheet.rows, sheet.rowNumbers, mapping)
   return { ok: true, kind: 'contacts', contacts, skipped }
 }
@@ -159,6 +189,8 @@ export type CommitResult =
       activitiesCreated: number
       contactsCreated: number
       contactsReused: number
+      dealsCreated: number
+      dealsUpdated: number
       errors: number
     }
 
@@ -364,6 +396,8 @@ export async function commitActiveClients(payload: {
     activitiesCreated: 0,
     contactsCreated,
     contactsReused,
+    dealsCreated: 0,
+    dealsUpdated: 0,
     errors: rowErrors.length,
   }
 }
@@ -472,6 +506,8 @@ export async function commitContacts(payload: {
     activitiesCreated: 0,
     contactsCreated,
     contactsReused,
+    dealsCreated: 0,
+    dealsUpdated: 0,
     errors: rowErrors.length,
   }
 }
@@ -593,6 +629,299 @@ export async function commitActivities(payload: {
     activitiesCreated: created,
     contactsCreated: 0,
     contactsReused: 0,
+    dealsCreated: 0,
+    dealsUpdated: 0,
+    errors: rowErrors.length,
+  }
+}
+
+/**
+ * The Pipeline tab. One row per deal, matched to an account and a stage during
+ * the preview, so what was shown is what gets written.
+ */
+export async function commitPipeline(payload: {
+  fileName: string
+  sheetName: string
+  mapping: Record<string, number>
+  deals: ProposedDeal[]
+}): Promise<CommitResult> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can import data.' }
+
+  const usable = payload.deals.filter((d) => !d.error)
+
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .insert({
+      source_tab: `${payload.fileName} · ${payload.sheetName}`,
+      file_name: payload.fileName,
+      mapping: payload.mapping,
+      row_count: usable.length,
+      status: 'draft',
+      imported_by: userId,
+    })
+    .select('id')
+    .single()
+
+  if (batchError || !batch) {
+    return { ok: false, error: `Could not start the import: ${batchError?.message}` }
+  }
+
+  const batchId = batch.id
+  const rowErrors: { batch_id: string; row_number: number; raw_row: Json; error: string }[] = []
+
+  // A row whose stage did not match never had a home to go to. Record it as an
+  // error rather than parking it in a stage nobody chose.
+  for (const bad of payload.deals.filter((d) => d.error)) {
+    rowErrors.push({
+      batch_id: batchId,
+      row_number: bad.rowNumber,
+      raw_row: JSON.parse(JSON.stringify(bad)) as Json,
+      error: bad.error ?? 'Unknown problem.',
+    })
+  }
+
+  const [{ data: stages }, { data: propertyTypes }, { data: leadSources }] = await Promise.all([
+    supabase.from('pipeline_stages').select('id, name'),
+    supabase.from('property_types').select('id, name'),
+    supabase.from('lead_sources').select('id, name'),
+  ])
+
+  const stageByName = new Map((stages ?? []).map((s) => [s.name.toLowerCase(), s.id]))
+  const typeByName = new Map((propertyTypes ?? []).map((p) => [p.name.toLowerCase(), p.id]))
+  const sourceByName = new Map((leadSources ?? []).map((l) => [l.name.toLowerCase(), l.id]))
+
+  const rows = usable.map((d) => ({
+    rowNumber: d.rowNumber,
+    name: d.name,
+    stage_id: stageByName.get((d.stageName ?? '').toLowerCase()) as string,
+    account_id: d.accountId,
+    building_id: d.buildingId,
+    property_type_id: typeByName.get((d.segmentName ?? '').toLowerCase()) ?? null,
+    lead_source_id: sourceByName.get((d.sourceName ?? '').toLowerCase()) ?? null,
+    owner_id: d.ownerId,
+    secondary_owner_id: d.secondaryOwnerId,
+    monthly_value: d.monthlyValue,
+    expected_close_date: d.expectedCloseDate,
+    scope_notes: d.notes,
+    import_batch_id: batchId,
+  }))
+
+  let created = 0
+
+  // Fifty-odd rows one at a time is fine, but chunking matches the activity
+  // importer and keeps the connection from being hammered on a re-run.
+  for (let i = 0; i < rows.length; i += 100) {
+    const chunk = rows.slice(i, i + 100)
+    const { error } = await supabase
+      .from('opportunities')
+      // rowNumber is carried alongside for error reporting; strip it before insert.
+      .insert(
+        chunk.map((row) => {
+          const rest = { ...row } as Partial<typeof row>
+          delete rest.rowNumber
+          return rest as Omit<typeof row, 'rowNumber'>
+        }),
+      )
+
+    if (!error) {
+      created += chunk.length
+      continue
+    }
+
+    // A chunk that fails is retried one row at a time, so one bad row does not
+    // take ninety-nine good ones down with it.
+    for (const row of chunk) {
+      const { rowNumber, ...rest } = row
+      const { error: rowError } = await supabase.from('opportunities').insert(rest)
+      if (rowError) {
+        rowErrors.push({
+          batch_id: batchId,
+          row_number: rowNumber,
+          raw_row: JSON.parse(JSON.stringify(rest)) as Json,
+          error: rowError.message,
+        })
+      } else {
+        created += 1
+      }
+    }
+  }
+
+  if (rowErrors.length > 0) await supabase.from('import_row_errors').insert(rowErrors)
+
+  await supabase
+    .from('import_batches')
+    .update({ status: 'committed', committed_at: new Date().toISOString(), row_count: created })
+    .eq('id', batchId)
+
+  revalidatePath('/opportunities')
+  revalidatePath('/reports/pipeline')
+  revalidatePath('/admin/import')
+
+  return {
+    ok: true,
+    batchId,
+    accountsCreated: 0,
+    accountsReused: 0,
+    buildingsCreated: 0,
+    activitiesCreated: 0,
+    contactsCreated: 0,
+    contactsReused: 0,
+    dealsCreated: created,
+    dealsUpdated: 0,
+    errors: rowErrors.length,
+  }
+}
+
+/**
+ * The Won/Loss tab. Mostly an UPDATE: these deals already exist from the
+ * Pipeline tab, and this fills in the close date, the loss reason, the
+ * competitor and what tipped the win.
+ *
+ * Only a row that matched nothing inserts, and only those inserts carry the
+ * batch id — an update to a deal somebody else imported must not be deleted by
+ * undoing this batch.
+ */
+export async function commitWonLost(payload: {
+  fileName: string
+  sheetName: string
+  mapping: Record<string, number>
+  outcomes: ProposedOutcome[]
+  /** Distinct "Tipped the win" phrases the admin chose to keep as win reasons. */
+  winReasonNames: string[]
+}): Promise<CommitResult> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can import data.' }
+
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .insert({
+      source_tab: `${payload.fileName} · ${payload.sheetName}`,
+      file_name: payload.fileName,
+      mapping: payload.mapping,
+      row_count: payload.outcomes.length,
+      status: 'draft',
+      imported_by: userId,
+    })
+    .select('id')
+    .single()
+
+  if (batchError || !batch) {
+    return { ok: false, error: `Could not start the import: ${batchError?.message}` }
+  }
+
+  const batchId = batch.id
+  const rowErrors: { batch_id: string; row_number: number; raw_row: Json; error: string }[] = []
+
+  // The win reasons Ryan ticked in the preview. Created before the deals, so a
+  // deal can point at one straight away.
+  for (const [index, name] of payload.winReasonNames.entries()) {
+    await supabase
+      .from('win_reasons')
+      .upsert({ name, sort_order: index + 1 }, { onConflict: 'name' })
+  }
+
+  const [{ data: stages }, { data: lossReasons }, { data: competitors }, { data: winReasons }] =
+    await Promise.all([
+      supabase.from('pipeline_stages').select('id, name, is_won, is_lost'),
+      supabase.from('loss_reasons').select('id, name'),
+      supabase.from('competitors').select('id, name'),
+      supabase.from('win_reasons').select('id, name'),
+    ])
+
+  const wonStage = (stages ?? []).find((s) => s.is_won)?.id
+  const lostStage = (stages ?? []).find((s) => s.is_lost)?.id
+  const lossByName = new Map((lossReasons ?? []).map((l) => [l.name.toLowerCase(), l.id]))
+  const winByName = new Map((winReasons ?? []).map((w) => [w.name.toLowerCase(), w.id]))
+  const competitorByName = new Map((competitors ?? []).map((c) => [c.name.toLowerCase(), c.id]))
+
+  let updated = 0
+  let created = 0
+
+  for (const o of payload.outcomes) {
+    try {
+      let competitorId: string | null = null
+      if (o.competitorName) {
+        const key = o.competitorName.toLowerCase()
+        competitorId = competitorByName.get(key) ?? null
+        if (!competitorId) {
+          const { data, error } = await supabase
+            .from('competitors')
+            .insert({ name: o.competitorName })
+            .select('id')
+            .single()
+          if (error) throw new Error(`competitor: ${error.message}`)
+          competitorId = data.id
+          competitorByName.set(key, competitorId)
+        }
+      }
+
+      const mappedLoss = mapLossReason(o.lossReasonText)
+      const values = {
+        stage_id: (o.won ? wonStage : lostStage) as string,
+        actual_close_date: o.closeDate,
+        opened_on: o.openedOn,
+        loss_reason_id: o.won ? null : (lossByName.get((mappedLoss ?? '').toLowerCase()) ?? null),
+        competitor_id: competitorId,
+        win_notes: o.winNotes,
+        win_reason_id: o.winNotes ? (winByName.get(o.winNotes.toLowerCase()) ?? null) : null,
+      }
+
+      if (o.opportunityId) {
+        // No import_batch_id here: this deal already existed, and stamping it
+        // would mean undoing this batch deleted somebody else's import.
+        const { error } = await supabase
+          .from('opportunities')
+          .update(values)
+          .eq('id', o.opportunityId)
+        if (error) throw new Error(error.message)
+        updated += 1
+      } else {
+        const { error } = await supabase.from('opportunities').insert({
+          ...values,
+          name: o.company,
+          monthly_value: o.monthlyValue,
+          import_batch_id: batchId,
+        })
+        if (error) throw new Error(error.message)
+        created += 1
+      }
+    } catch (error) {
+      rowErrors.push({
+        batch_id: batchId,
+        row_number: o.rowNumber,
+        raw_row: JSON.parse(JSON.stringify(o)) as Json,
+        error: error instanceof Error ? error.message : 'Unknown problem.',
+      })
+    }
+  }
+
+  if (rowErrors.length > 0) await supabase.from('import_row_errors').insert(rowErrors)
+
+  await supabase
+    .from('import_batches')
+    .update({
+      status: 'committed',
+      committed_at: new Date().toISOString(),
+      row_count: created + updated,
+    })
+    .eq('id', batchId)
+
+  revalidatePath('/opportunities')
+  revalidatePath('/reports/pipeline')
+  revalidatePath('/admin/import')
+
+  return {
+    ok: true,
+    batchId,
+    accountsCreated: 0,
+    accountsReused: 0,
+    buildingsCreated: 0,
+    activitiesCreated: 0,
+    contactsCreated: 0,
+    contactsReused: 0,
+    dealsCreated: created,
+    dealsUpdated: updated,
     errors: rowErrors.length,
   }
 }
@@ -606,8 +935,11 @@ export async function rollbackImport(batchId: string): Promise<{ ok: boolean; er
   if (!admin) return { ok: false, error: 'Only an admin can undo an import.' }
 
   // Order matters: buildings reference accounts, and contract periods and
-  // contact links cascade from the building.
+  // contact links cascade from the building. Opportunities go before accounts
+  // too — and note that a deal the Won/Loss import merely UPDATED was never
+  // stamped with a batch id, so it survives, which is the point.
   await supabase.from('activities').delete().eq('import_batch_id', batchId)
+  await supabase.from('opportunities').delete().eq('import_batch_id', batchId)
   await supabase.from('buildings').delete().eq('import_batch_id', batchId)
   await supabase.from('contacts').delete().eq('import_batch_id', batchId)
   const { error } = await supabase.from('accounts').delete().eq('import_batch_id', batchId)
@@ -618,6 +950,8 @@ export async function rollbackImport(batchId: string): Promise<{ ok: boolean; er
   revalidatePath('/accounts')
   revalidatePath('/buildings')
   revalidatePath('/contacts')
+  revalidatePath('/opportunities')
+  revalidatePath('/reports/pipeline')
   revalidatePath('/admin/import')
   return { ok: true }
 }

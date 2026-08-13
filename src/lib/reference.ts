@@ -54,6 +54,39 @@ export async function getCompetitors() {
   return data ?? []
 }
 
+export async function getLeadSources() {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('lead_sources')
+    .select('id, name')
+    .eq('is_active', true)
+    .order('sort_order')
+  return data ?? []
+}
+
+/** Why deals are won. Starts empty on purpose — the list is Ryan's to build. */
+export async function getWinReasons() {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('win_reasons')
+    .select('id, name')
+    .eq('is_active', true)
+    .order('sort_order')
+  return data ?? []
+}
+
+/** Every stage, in board order. Includes the closed ones — the board has columns
+ *  for them, because that is where a deal is dragged to close it. */
+export async function getPipelineStages() {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('pipeline_stages')
+    .select('id, name, probability, sort_order, is_won, is_lost')
+    .eq('is_active', true)
+    .order('sort_order')
+  return data ?? []
+}
+
 /** The signed-in person's profile, including whether they may see pay rates. */
 export async function getCurrentProfile() {
   const supabase = await createClient()

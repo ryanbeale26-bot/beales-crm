@@ -7,6 +7,8 @@ import {
   commitActiveClients,
   commitActivities,
   commitContacts,
+  commitPipeline,
+  commitWonLost,
   parseUpload,
   previewImport,
   type CommitResult,
@@ -20,6 +22,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { IMPORTERS, type ImporterKey } from '@/lib/import/definitions'
 import type { ProposedActivity } from '@/lib/import/activities'
+import type { ProposedDeal } from '@/lib/import/pipeline'
+import type { ProposedOutcome } from '@/lib/import/won-lost'
 import type { ProposedBuilding, ProposedContact, SkippedRow } from '@/lib/import/active-clients'
 import { money } from '@/lib/format'
 
@@ -43,6 +47,12 @@ export function Importer() {
   const [buildings, setBuildings] = useState<ProposedBuilding[]>([])
   const [contacts, setContacts] = useState<ProposedContact[]>([])
   const [activities, setActivities] = useState<ProposedActivity[]>([])
+  const [deals, setDeals] = useState<ProposedDeal[]>([])
+  const [outcomes, setOutcomes] = useState<ProposedOutcome[]>([])
+  // Which "Tipped the win" phrases to keep as rankable win reasons. Everything
+  // is ticked to begin with; unticking one keeps the sentence on the deal but
+  // leaves it out of the report's ranking.
+  const [keptWinReasons, setKeptWinReasons] = useState<Set<string>>(new Set())
   const [skipped, setSkipped] = useState<SkippedRow[]>([])
   const [result, setResult] = useState<CommitResult | null>(null)
 
@@ -85,6 +95,13 @@ export function Importer() {
     setBuildings(res.kind === 'active-clients' ? res.buildings : [])
     setContacts(res.kind === 'contacts' ? res.contacts : [])
     setActivities(res.kind === 'activities' ? res.activities : [])
+    setDeals(res.kind === 'pipeline' ? res.deals : [])
+    setOutcomes(res.kind === 'won-lost' ? res.outcomes : [])
+    if (res.kind === 'won-lost') {
+      setKeptWinReasons(
+        new Set(res.outcomes.map((o) => o.winNotes).filter((n): n is string => Boolean(n))),
+      )
+    }
     setSkipped(res.skipped)
     setStep('preview')
   }
@@ -92,12 +109,31 @@ export function Importer() {
   async function handleCommit() {
     setBusy(true)
     setError(null)
-    const res =
-      importerKey === 'active-clients'
-        ? await commitActiveClients({ fileName, sheetName, mapping, buildings })
-        : importerKey === 'activities'
-          ? await commitActivities({ fileName, sheetName, mapping, activities })
-          : await commitContacts({ fileName, sheetName, mapping, contacts })
+    // A switch rather than a chain of ternaries: the old fall-through quietly
+    // ran the contacts importer for anything unrecognised.
+    let res: CommitResult
+    switch (importerKey) {
+      case 'active-clients':
+        res = await commitActiveClients({ fileName, sheetName, mapping, buildings })
+        break
+      case 'activities':
+        res = await commitActivities({ fileName, sheetName, mapping, activities })
+        break
+      case 'pipeline':
+        res = await commitPipeline({ fileName, sheetName, mapping, deals })
+        break
+      case 'won-lost':
+        res = await commitWonLost({
+          fileName,
+          sheetName,
+          mapping,
+          outcomes,
+          winReasonNames: [...keptWinReasons],
+        })
+        break
+      default:
+        res = await commitContacts({ fileName, sheetName, mapping, contacts })
+    }
     setBusy(false)
 
     if (!res.ok) return setError(res.error)
@@ -445,6 +481,200 @@ export function Importer() {
         </div>
       )}
 
+      {step === 'preview' && importerKey === 'pipeline' && (
+        <div className="space-y-6">
+          <div className="bg-muted rounded-[3px] p-3 text-sm">
+            <strong>{deals.filter((d) => !d.error).length} deals</strong> ·{' '}
+            {money(deals.reduce((sum, d) => sum + (d.monthlyValue ?? 0), 0))}/mo ·{' '}
+            {deals.filter((d) => d.accountId).length} matched to an account ·{' '}
+            {deals.filter((d) => d.isProjectWork).length} one-off project rows ·{' '}
+            {skipped.length} {skipped.length === 1 ? 'row' : 'rows'} skipped
+            {deals.some((d) => d.error) && (
+              <span className="text-destructive block">
+                {deals.filter((d) => d.error).length} rows cannot be imported — their stage is not
+                one of the stages on the board. They are listed below and will be recorded as
+                errors rather than guessed at.
+              </span>
+            )}
+          </div>
+
+          <div>
+            <SectionTitle>How the sources were mapped</SectionTitle>
+            <div className="border-border border-t text-sm">
+              {sourceCounts(deals).map(([name, count]) => (
+                <div key={name} className="border-border flex justify-between border-b px-2 py-1.5">
+                  <span>{name}</span>
+                  <span className="text-muted-foreground">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <SectionTitle>Every deal</SectionTitle>
+            <div className="border-border overflow-x-auto border-t">
+              <table className="w-full text-sm">
+                <thead className="text-muted-foreground">
+                  <tr className="border-border border-b">
+                    <th className="px-2 py-1.5 text-left font-normal">Row</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Deal</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Stage</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Value</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Account</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deals.map((d) => (
+                    <tr key={d.rowNumber} className="border-border border-b align-top">
+                      <td className="text-muted-foreground px-2 py-1.5">{d.rowNumber}</td>
+                      <td className="px-2 py-1.5">
+                        {d.name}
+                        {d.warnings.map((w, i) => (
+                          <div key={i} className="text-muted-foreground text-xs">
+                            {w}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {d.error ? (
+                          <span className="text-destructive">{d.error}</span>
+                        ) : (
+                          d.stageName
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {d.monthlyValue ? `${money(d.monthlyValue)}/mo` : '—'}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {d.accountName ?? <span className="text-muted-foreground">new</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {skipped.length > 0 && <SkippedList skipped={skipped} />}
+
+          <CommitBar busy={busy} onCommit={handleCommit} onBack={() => setStep('map')}>
+            Import {deals.filter((d) => !d.error).length} deals
+          </CommitBar>
+        </div>
+      )}
+
+      {step === 'preview' && importerKey === 'won-lost' && (
+        <div className="space-y-6">
+          <div className="bg-muted rounded-[3px] p-3 text-sm">
+            <strong>{outcomes.length} closed deals</strong> · {outcomes.filter((o) => o.won).length}{' '}
+            won, {outcomes.filter((o) => !o.won).length} lost ·{' '}
+            {outcomes.filter((o) => o.opportunityId).length} update a deal that already exists ·{' '}
+            {outcomes.filter((o) => !o.opportunityId).length} will be created ·{' '}
+            {skipped.length} {skipped.length === 1 ? 'row' : 'rows'} skipped
+            <span className="text-muted-foreground block">
+              Undo removes the {outcomes.filter((o) => !o.opportunityId).length} deals this
+              creates. The {outcomes.filter((o) => o.opportunityId).length} it only fills in were
+              already here, so they are not deleted and keep their close details.
+            </span>
+            {outcomes.filter((o) => !o.won).length < 5 && (
+              <span className="text-muted-foreground block">
+                Only {outcomes.filter((o) => !o.won).length} recorded{' '}
+                {outcomes.filter((o) => !o.won).length === 1 ? 'loss' : 'losses'} in the whole tab,
+                so the loss report will be thin — that is the data, not a bug.
+              </span>
+            )}
+          </div>
+
+          {winNoteOptions(outcomes).length > 0 && (
+            <div>
+              <SectionTitle>Turn these into win reasons?</SectionTitle>
+              <p className="text-muted-foreground mb-2 text-sm">
+                Each one becomes a reason you can rank in the pipeline report. Untick anything
+                that is a one-off — the sentence still stays on the deal either way.
+              </p>
+              <div className="border-border border-t text-sm">
+                {winNoteOptions(outcomes).map(([phrase, count]) => (
+                  <label
+                    key={phrase}
+                    className="border-border flex items-start gap-2 border-b px-2 py-1.5"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={keptWinReasons.has(phrase)}
+                      onChange={(e) =>
+                        setKeptWinReasons((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(phrase)
+                          else next.delete(phrase)
+                          return next
+                        })
+                      }
+                      className="mt-1"
+                    />
+                    <span className="flex-1">{phrase}</span>
+                    <span className="text-muted-foreground">{count}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <SectionTitle>Every row</SectionTitle>
+            <div className="border-border overflow-x-auto border-t">
+              <table className="w-full text-sm">
+                <thead className="text-muted-foreground">
+                  <tr className="border-border border-b">
+                    <th className="px-2 py-1.5 text-left font-normal">Row</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Company</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Outcome</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Closed</th>
+                    <th className="px-2 py-1.5 text-left font-normal">Lands on</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outcomes.map((o) => (
+                    <tr key={o.rowNumber} className="border-border border-b align-top">
+                      <td className="text-muted-foreground px-2 py-1.5">{o.rowNumber}</td>
+                      <td className="px-2 py-1.5">
+                        {o.company}
+                        {o.warnings.map((w, i) => (
+                          <div key={i} className="text-muted-foreground text-xs">
+                            {w}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {o.won ? 'Won' : 'Lost'}
+                        {o.competitorName && (
+                          <div className="text-muted-foreground text-xs">to {o.competitorName}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {o.closeDate ?? '—'}
+                        {o.openedOn && (
+                          <div className="text-muted-foreground text-xs">from {o.openedOn}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {o.matchedName ?? <span className="text-muted-foreground">a new deal</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {skipped.length > 0 && <SkippedList skipped={skipped} />}
+
+          <CommitBar busy={busy} onCommit={handleCommit} onBack={() => setStep('map')}>
+            Update {outcomes.filter((o) => o.opportunityId).length} and create{' '}
+            {outcomes.filter((o) => !o.opportunityId).length}
+          </CommitBar>
+        </div>
+      )}
+
       {step === 'done' && result?.ok && (
         <div className="space-y-4">
           <div className="bg-secondary rounded-[3px] p-4">
@@ -461,6 +691,10 @@ export function Importer() {
               {result.contactsCreated > 0 && <li>{result.contactsCreated} contacts created</li>}
               {result.contactsReused > 0 && (
                 <li>{result.contactsReused} contacts already existed and were left alone</li>
+              )}
+              {result.dealsCreated > 0 && <li>{result.dealsCreated} deals created</li>}
+              {result.dealsUpdated > 0 && (
+                <li>{result.dealsUpdated} existing deals had their close details filled in</li>
               )}
               {result.errors > 0 && (
                 <li className="text-destructive">{result.errors} rows failed — see below</li>
@@ -549,6 +783,26 @@ function Steps({ current }: { current: Step }) {
       ))}
     </ol>
   )
+}
+
+/** How each free-text Source landed, so nothing maps silently. */
+function sourceCounts(deals: ProposedDeal[]): [string, number][] {
+  const counts = new Map<string, number>()
+  for (const d of deals) {
+    const key = d.sourceName ?? (d.rawSource ? `Left blank (was "${d.rawSource}")` : 'Left blank')
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])
+}
+
+/** The distinct "Tipped the win" phrases, biggest first. */
+function winNoteOptions(outcomes: ProposedOutcome[]): [string, number][] {
+  const counts = new Map<string, number>()
+  for (const o of outcomes) {
+    if (!o.winNotes) continue
+    counts.set(o.winNotes, (counts.get(o.winNotes) ?? 0) + 1)
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])
 }
 
 function typeCounts(activities: ProposedActivity[]): [string, number][] {

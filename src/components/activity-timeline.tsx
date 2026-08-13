@@ -7,6 +7,7 @@ type Scope =
   | { accountId: string }
   | { buildingId: string }
   | { contactId: string }
+  | { opportunityId: string }
 
 /** "3 days ago" reads faster than a date when you are scanning a timeline. */
 function ago(iso: string): string {
@@ -43,6 +44,7 @@ export async function ActivityTimeline({ scope, limit = 30 }: { scope: Scope; li
   // because the trigger stamps account_id on the way in.
   if ('accountId' in scope) query = query.eq('account_id', scope.accountId)
   else if ('buildingId' in scope) query = query.eq('building_id', scope.buildingId)
+  else if ('opportunityId' in scope) query = query.eq('opportunity_id', scope.opportunityId)
   else query = query.eq('contact_id', scope.contactId)
 
   const { data: activities, error } = await query
