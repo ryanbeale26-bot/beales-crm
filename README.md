@@ -65,20 +65,22 @@ git push origin main
 no `vercel.json` needed. **Do not deploy yet**; add the variables first, or the
 first build ships an app that cannot reach the database.
 
-**3. Add three environment variables**, for Production, Preview and Development:
+**3. Add two environment variables**, ticked for Production, Preview and
+Development:
 
 | Variable | Value |
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://pjcitahktwnawucoznhk.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The anon / publishable key, same as `.env.local` |
-| `NEXT_PUBLIC_SITE_URL` | The real domain, e.g. `https://beales-crm.vercel.app`, **no trailing slash** |
 
 **Do not add `SUPABASE_SERVICE_ROLE_KEY`.** Nothing under `src/` reads it — only
 the local scripts do — and it bypasses every security rule in the database. It
 has no business in a web host's environment.
 
-`NEXT_PUBLIC_SITE_URL` is a chicken-and-egg: you need the domain Vercel assigns.
-Deploy once, copy the domain, set the variable, then redeploy.
+**Do not add `NEXT_PUBLIC_SITE_URL` either.** The app falls back to Vercel's own
+`VERCEL_PROJECT_PRODUCTION_URL`, which Vercel fills in automatically, so magic
+links work on the first deploy with no second pass. Set it only later, if the
+app moves to a custom domain.
 
 **4. Tell Supabase about the domain.** Dashboard → Authentication → URL
 Configuration:

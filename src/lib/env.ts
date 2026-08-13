@@ -33,6 +33,26 @@ export function supabaseAnonKey(): string {
   return required('NEXT_PUBLIC_SUPABASE_ANON_KEY', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 }
 
+/**
+ * Where this app is reachable. Used to build the magic-link redirect, so
+ * getting it wrong means every sign-in link points at the wrong place.
+ *
+ * Only ever called from a 'use server' file, which is what lets the middle
+ * branch work: `VERCEL_PROJECT_PRODUCTION_URL` is a plain server variable
+ * (no NEXT_PUBLIC_ prefix), set automatically on every Vercel deployment. It
+ * saves setting the domain by hand, which is a chicken-and-egg — you cannot
+ * know the domain until after the first deploy — and it always resolves to the
+ * production domain, so a magic link sent from a preview build still lands
+ * somewhere real rather than on a throwaway deployment URL.
+ *
+ * Set NEXT_PUBLIC_SITE_URL to override, e.g. once there is a custom domain.
+ */
 export function siteUrl(): string {
-  return process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') || 'http://localhost:3000'
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+  if (vercel) return `https://${vercel.replace(/\/$/, '')}`
+
+  return 'http://localhost:3000'
 }
