@@ -171,17 +171,27 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 1b** — Importer built (upload → map columns → preview → confirm → undo). Tabs 2 and 3 supported; **not yet run for real**
 - [x] **Phase 2** — Quick-add logging, timelines, activity feed with filters, activity importer. Tab 4 **not yet imported for real**
 - [x] **Phase 3** — Opportunities board, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report, admin reference-data editor. Importers for tabs 1 and 5 built and rehearsed; **the real imports are Ryan's to run**
-- [ ] **Phase 4** — Employees, assignments, staff movement history, projects
+- [ ] **Phase 4** — Employees, assignments, staff movement history, projects. **Partly built already:** the `employees` / `employee_assignments` schema, the `/employees` list and form, and assigning someone to a building all shipped alongside Phase 1a. What is missing is an employee detail page, the staff-movement report on top of `v_staff_movement`, and projects entirely — `projects` and `project_employees` have a schema, 10 seeded `project_types`, and no screens at all. **Blocked on where employee data comes from:** the workbook has no employee tab and all three tables are empty
 - [ ] **Phase 5** — Revenue views in Postgres, dashboard (mirror tab 0 first), six reports with CSV export
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
 - [ ] **Phase 7+** — Integrations, one per phase, in the order above
 
 ## Current status
 
-**Phase:** 3 built and self-tested. Ryan has imported tabs 2, 3 **and 4** for real — 22 accounts,
-38 buildings, 97 contacts, 667 activities. Tabs 1 and 5 have working importers, rehearsed end to
-end against the real workbook and rolled back; **the real pipeline import has not been run.**
+**Phase:** 3 shipped. **All five spreadsheet tabs are now imported for real** — 22 accounts,
+38 buildings, 97 contacts, 667 activities, 55 opportunities. The migration is done; the Google
+Sheet is no longer the source of truth for anything the CRM holds.
 **Last session:** 2026-08-13
+
+Live counts: 5 committed import batches, 8 win reasons (Ryan kept every phrase the Won/Loss
+preview offered), 1 competitor (Janitronics). **`employees`, `employee_assignments` and `projects`
+are all still empty** — nothing in the workbook feeds them, which is the first thing Phase 4 has
+to solve.
+
+**A data gap worth raising before the dashboard is built:** 35 of the 55 deals carry no monthly
+value, because only 16 of the 51 Pipeline rows had a figure. Every pipeline total is understated
+until Ryan fills them in, and the screens say so out loud rather than quietly reporting a smaller
+number.
 
 **Correction to earlier notes:** tab 4 *has* been imported (667 activities, batch committed
 2026-08-12), and there is a **sixth profile — Brendan Mulligan** (`Brendan.Mulligan@bealesllc.com`,
