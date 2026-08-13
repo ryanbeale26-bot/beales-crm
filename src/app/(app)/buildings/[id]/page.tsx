@@ -3,8 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { assignEmployee, endAssignment } from '@/app/(app)/actions'
 import { Select } from '@/components/form-field'
-import { EmptyState, PageHeader } from '@/components/page-header'
-import { Badge } from '@/components/ui/badge'
+import { EmptyState, PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -91,17 +90,29 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
     <div>
       <PageHeader
         title={building.name}
-        backHref={`/accounts/${building.account?.id}?tab=Buildings`}
-        backLabel={building.account?.name ?? 'Account'}
+        breadcrumbs={[
+          { label: 'Accounts', href: '/accounts' },
+          {
+            label: building.account?.name ?? 'Account',
+            href: `/accounts/${building.account?.id}?tab=Buildings`,
+          },
+          { label: building.name },
+        ]}
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
-            <Badge variant={building.status === 'active' ? 'default' : 'secondary'}>
+            <span className="bg-muted rounded-[3px] px-1.5 py-0.5 text-xs">
               {BUILDING_STATUS_LABELS[building.status]}
-            </Badge>
+            </span>
             {building.health_score && (
-              <Badge variant={building.health_score === 'at_risk' ? 'destructive' : 'outline'}>
+              <span
+                className={
+                  building.health_score === 'at_risk'
+                    ? 'text-destructive bg-destructive/10 rounded-[3px] px-1.5 py-0.5 text-xs'
+                    : 'bg-muted rounded-[3px] px-1.5 py-0.5 text-xs'
+                }
+              >
                 {HEALTH_LABELS[building.health_score]}
-              </Badge>
+              </span>
             )}
             <span>
               {current ? `${money(current.monthly_value)}/mo · ${money(current.annual_value)}/yr` : 'No contract value'}
@@ -118,60 +129,60 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
 
       <div className="grid gap-8 lg:grid-cols-2">
         <section>
-          <h2 className="mb-3 text-sm font-medium">Details</h2>
+          <SectionTitle>Details</SectionTitle>
           <dl className="space-y-3 text-sm">
-            <Row label="Address">
+            <Property label="Address">
               {[building.address_line1, building.city, building.state, building.postal_code]
                 .filter(Boolean)
                 .join(', ') || '—'}
-            </Row>
-            <Row label="Property type">{building.property_type?.name ?? '—'}</Row>
-            <Row label="Entity">{ENTITY_LABELS[building.entity]}</Row>
-            <Row label="Contract">
+            </Property>
+            <Property label="Property type">{building.property_type?.name ?? '—'}</Property>
+            <Property label="Entity">{ENTITY_LABELS[building.entity]}</Property>
+            <Property label="Contract">
               {date(building.contract_start_date)} → {date(building.contract_end_date)}
-            </Row>
-            <Row label="Service type">
+            </Property>
+            <Property label="Service type">
               {services && services.length > 0
                 ? services.map((s) => s.service_type?.name).filter(Boolean).join(', ')
                 : '—'}
-            </Row>
-            <Row label="Owner">
+            </Property>
+            <Property label="Owner">
               {building.owner?.full_name ?? '—'}
               {building.owner && !building.owner.is_active && (
                 <span className="text-muted-foreground"> (no longer here)</span>
               )}
-            </Row>
-            <Row label="Second owner">{building.secondary_owner?.full_name ?? '—'}</Row>
-            {building.status === 'lost' && <Row label="Lost on">{date(building.lost_date)}</Row>}
+            </Property>
+            <Property label="Second owner">{building.secondary_owner?.full_name ?? '—'}</Property>
+            {building.status === 'lost' && <Property label="Lost on">{date(building.lost_date)}</Property>}
           </dl>
 
-          <h2 className="mt-6 mb-3 text-sm font-medium">Contracted hours</h2>
+          <SectionTitle>Contracted hours</SectionTitle>
           <div className="grid grid-cols-3 gap-3">
             <Stat label="Per week" value={hours?.weekly_hours} />
             <Stat label="Per month" value={hours?.monthly_hours} />
             <Stat label="Per year" value={hours?.annual_hours} />
           </div>
           <dl className="mt-4 space-y-2 text-sm">
-            <Row label="Day porter">
+            <Property label="Day porter">
               {building.day_porter
                 ? `${building.day_porter_hours_per_day ?? 0} hrs × ${building.day_porter_days_per_week ?? 5} days`
                 : 'No'}
-            </Row>
-            <Row label="Nights">
+            </Property>
+            <Property label="Nights">
               {building.night_hours_per_night
                 ? `${building.night_hours_per_night} hrs × ${building.night_days_per_week ?? 5} nights`
                 : '—'}
-            </Row>
-            <Row label="Weekends">
+            </Property>
+            <Property label="Weekends">
               {building.weekend_service
                 ? `${building.weekend_hours_per_week ?? 0} hrs per week`
                 : 'No'}
-            </Row>
+            </Property>
           </dl>
 
           {building.scope_notes && (
             <>
-              <h2 className="mt-6 mb-2 text-sm font-medium">Scope of work</h2>
+              <SectionTitle>Scope of work</SectionTitle>
               <p className="text-muted-foreground text-sm whitespace-pre-wrap">
                 {building.scope_notes}
               </p>
@@ -180,11 +191,11 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
         </section>
 
         <section>
-          <h2 className="mb-3 text-sm font-medium">Contract value history</h2>
+          <SectionTitle>Contract value history</SectionTitle>
           {periods && periods.length > 0 ? (
-            <ul className="divide-border overflow-hidden rounded-xl border text-sm">
+            <ul className="border-border border-t text-sm">
               {periods.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-3 border-b p-3 last:border-b-0">
+                <li key={p.id} className="row-hover border-border flex items-center justify-between gap-3 border-b px-2 py-2">
                   <div>
                     <div className="font-medium">{money(p.monthly_value)}/mo</div>
                     <div className="text-muted-foreground text-xs">
@@ -192,7 +203,11 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
                       {p.change_reason.replace(/_/g, ' ')}
                     </div>
                   </div>
-                  {p.end_date === null && <Badge variant="outline">Current</Badge>}
+                  {p.end_date === null && (
+                    <span className="text-muted-foreground border-border shrink-0 rounded-[3px] border px-1.5 py-0.5 text-xs">
+                      Current
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -206,7 +221,7 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
           )}
 
           <div className="mt-6 mb-3 flex items-baseline justify-between gap-2">
-            <h2 className="text-sm font-medium">Beale&rsquo;s staff here</h2>
+            <h2 className="text-base font-semibold">Beale&rsquo;s staff here</h2>
             {currentStaff.length > 0 && (
               <span
                 className={
@@ -221,9 +236,9 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
           </div>
 
           {currentStaff.length > 0 ? (
-            <ul className="divide-border mb-3 overflow-hidden rounded-xl border text-sm">
+            <ul className="border-border mb-3 border-t text-sm">
               {currentStaff.map((a) => (
-                <li key={a.id} className="flex items-center justify-between gap-3 border-b p-3 last:border-b-0">
+                <li key={a.id} className="row-hover border-border flex items-center justify-between gap-3 border-b px-2 py-2">
                   <div>
                     <div className="font-medium">{fullName(a.employee)}</div>
                     <div className="text-muted-foreground text-xs">
@@ -312,13 +327,13 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
             </details>
           )}
 
-          <h2 className="mt-6 mb-3 text-sm font-medium">Contacts at this building</h2>
+          <SectionTitle>Contacts at this building</SectionTitle>
           {links && links.length > 0 ? (
-            <ul className="divide-border overflow-hidden rounded-xl border text-sm">
+            <ul className="border-border border-t text-sm">
               {links.map(
                 ({ contact }) =>
                   contact && (
-                    <li key={contact.id} className="border-b p-3 last:border-b-0">
+                    <li key={contact.id} className="row-hover border-border border-b px-2 py-2">
                       <Link href={`/contacts/${contact.id}`} className="font-medium hover:underline">
                         {fullName(contact)}
                       </Link>
@@ -342,7 +357,7 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
 
 function Stat({ label, value }: { label: string; value: number | string | null | undefined }) {
   return (
-    <div className="rounded-lg border p-3">
+    <div className="bg-muted rounded-[3px] px-3 py-2">
       <div className="text-muted-foreground text-xs">{label}</div>
       <div className="text-lg font-semibold">
         {value === null || value === undefined ? '—' : Number(value).toLocaleString('en-US')}
@@ -352,11 +367,3 @@ function Stat({ label, value }: { label: string; value: number | string | null |
   )
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-4">
-      <dt className="text-muted-foreground w-32 shrink-0">{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  )
-}

@@ -25,7 +25,7 @@ export function LoginForm({ next }: { next: string }) {
       <input type="hidden" name="next" value={next} />
 
       <div>
-        <label htmlFor="email" className="block text-sm font-medium text-slate-700">
+        <label htmlFor="email" className="text-muted-foreground block text-[13px]">
           Email
         </label>
         <input
@@ -36,13 +36,13 @@ export function LoginForm({ next }: { next: string }) {
           autoCapitalize="none"
           autoCorrect="off"
           required
-          className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 shadow-sm outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+          className="bg-muted focus-visible:ring-ring mt-1 h-9 w-full rounded-[3px] border-0 px-2.5 text-base outline-none focus-visible:ring-2"
         />
       </div>
 
       {mode === 'password' && (
         <div>
-          <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+          <label htmlFor="password" className="text-muted-foreground block text-[13px]">
             Password
           </label>
           <input
@@ -51,18 +51,18 @@ export function LoginForm({ next }: { next: string }) {
             type="password"
             autoComplete="current-password"
             required
-            className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 shadow-sm outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+            className="bg-muted focus-visible:ring-ring mt-1 h-9 w-full rounded-[3px] border-0 px-2.5 text-base outline-none focus-visible:ring-2"
           />
         </div>
       )}
 
       {state.error && (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="bg-destructive/10 text-destructive rounded-[3px] px-3 py-2 text-sm">
           {state.error}
         </p>
       )}
       {state.notice && (
-        <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+        <p role="status" className="bg-muted text-foreground rounded-[3px] px-3 py-2 text-sm">
           {state.notice}
         </p>
       )}
@@ -70,7 +70,7 @@ export function LoginForm({ next }: { next: string }) {
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white shadow-sm transition hover:bg-blue-800 focus:ring-2 focus:ring-blue-200 focus:outline-none disabled:opacity-60"
+        className="bg-primary text-primary-foreground focus-visible:ring-ring h-9 w-full rounded-[3px] text-sm font-medium transition-[filter] duration-[20ms] hover:brightness-95 focus-visible:ring-2 disabled:opacity-60"
       >
         {pending
           ? 'Working…'
@@ -82,7 +82,7 @@ export function LoginForm({ next }: { next: string }) {
       <button
         type="button"
         onClick={() => setMode(mode === 'password' ? 'link' : 'password')}
-        className="w-full text-center text-sm text-slate-600 underline underline-offset-4 hover:text-slate-900"
+        className="text-muted-foreground hover:text-foreground w-full text-center text-sm"
       >
         {mode === 'password'
           ? 'Forgot your password? Email me a link instead'

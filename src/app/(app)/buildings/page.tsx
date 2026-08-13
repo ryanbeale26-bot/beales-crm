@@ -1,7 +1,6 @@
 import Link from 'next/link'
 
-import { EmptyState, PageHeader } from '@/components/page-header'
-import { Badge } from '@/components/ui/badge'
+import { EmptyState, PageHeader, Row, RowList } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -68,7 +67,7 @@ export default async function BuildingsPage({
           name="entity"
           defaultValue={entity ?? ''}
           aria-label="Filter by entity"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+          className="bg-muted h-8 rounded-[3px] border-0 px-2 text-sm outline-none"
         >
           <option value="">Both entities</option>
           {Object.entries(ENTITY_LABELS).map(([value, label]) => (
@@ -81,7 +80,7 @@ export default async function BuildingsPage({
           name="status"
           defaultValue={status ?? ''}
           aria-label="Filter by status"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+          className="bg-muted h-8 rounded-[3px] border-0 px-2 text-sm outline-none"
         >
           <option value="">All statuses</option>
           {Object.entries(BUILDING_STATUS_LABELS).map(([value, label]) => (
@@ -113,41 +112,49 @@ export default async function BuildingsPage({
           )}
         </EmptyState>
       ) : (
-        <div className="divide-border overflow-hidden rounded-xl border">
+        <RowList>
           {shown.map((b) => (
-            <Link
+            <Row
               key={b.id}
               href={`/buildings/${b.id}`}
-              className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b p-4 last:border-b-0"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{b.name}</span>
-                  <Badge variant={b.status === 'active' ? 'default' : 'secondary'}>
-                    {BUILDING_STATUS_LABELS[b.status]}
-                  </Badge>
-                  {b.health_score && (
-                    <Badge variant={b.health_score === 'at_risk' ? 'destructive' : 'outline'}>
-                      {HEALTH_LABELS[b.health_score]}
-                    </Badge>
+              title={b.name}
+              meta={[
+                b.account?.name,
+                [b.city, b.state].filter(Boolean).join(', ') || null,
+                ENTITY_LABELS[b.entity],
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              badges={
+                <>
+                  {b.status !== 'active' && (
+                    <span className="text-muted-foreground bg-muted rounded-[3px] px-1.5 py-0.5 text-xs">
+                      {BUILDING_STATUS_LABELS[b.status]}
+                    </span>
                   )}
-                </div>
-                <p className="text-muted-foreground mt-0.5 text-sm">
-                  {b.account?.name ?? 'No account'} ·{' '}
-                  {[b.city, b.state].filter(Boolean).join(', ') || 'No address'} ·{' '}
-                  {ENTITY_LABELS[b.entity]}
-                </p>
-              </div>
-              <div className="text-right text-sm font-medium">
-                {valueByBuilding.get(b.id) ? (
+                  {b.health_score && (
+                    <span
+                      className={
+                        b.health_score === 'at_risk'
+                          ? 'text-destructive bg-destructive/10 rounded-[3px] px-1.5 py-0.5 text-xs'
+                          : 'text-muted-foreground bg-muted rounded-[3px] px-1.5 py-0.5 text-xs'
+                      }
+                    >
+                      {HEALTH_LABELS[b.health_score]}
+                    </span>
+                  )}
+                </>
+              }
+              right={
+                valueByBuilding.get(b.id) ? (
                   `${money(valueByBuilding.get(b.id))}/mo`
                 ) : (
-                  <span className="text-muted-foreground font-normal">No value</span>
-                )}
-              </div>
-            </Link>
+                  <span className="text-muted-foreground">—</span>
+                )
+              }
+            />
           ))}
-        </div>
+        </RowList>
       )}
     </div>
   )

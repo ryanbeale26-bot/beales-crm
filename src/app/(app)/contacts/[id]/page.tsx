@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { linkContactToBuilding, unlinkContactFromBuilding } from '@/app/(app)/actions'
 import { Select } from '@/components/form-field'
-import { PageHeader } from '@/components/page-header'
+import { PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { date, fullName } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
@@ -45,8 +45,7 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
     <div>
       <PageHeader
         title={fullName(contact)}
-        backHref="/contacts"
-        backLabel="Contacts"
+        breadcrumbs={[{ label: 'Contacts', href: '/contacts' }, { label: fullName(contact) }]}
         subtitle={[contact.title, contact.account?.name].filter(Boolean).join(' · ') || undefined}
         action={
           <Button variant="outline" asChild>
@@ -57,9 +56,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
 
       <div className="grid gap-8 lg:grid-cols-2">
         <section>
-          <h2 className="mb-3 text-sm font-medium">Details</h2>
+          <SectionTitle>Details</SectionTitle>
           <dl className="space-y-3 text-sm">
-            <Row label="Email">
+            <Property label="Email">
               {contact.email ? (
                 <a href={`mailto:${contact.email}`} className="underline">
                   {contact.email}
@@ -67,8 +66,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               ) : (
                 '—'
               )}
-            </Row>
-            <Row label="Phone">
+            </Property>
+            <Property label="Phone">
               {contact.phone ? (
                 <a href={`tel:${contact.phone}`} className="underline">
                   {contact.phone}
@@ -76,8 +75,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               ) : (
                 '—'
               )}
-            </Row>
-            <Row label="Mobile">
+            </Property>
+            <Property label="Mobile">
               {contact.mobile ? (
                 <a href={`tel:${contact.mobile}`} className="underline">
                   {contact.mobile}
@@ -85,8 +84,8 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               ) : (
                 '—'
               )}
-            </Row>
-            <Row label="Account">
+            </Property>
+            <Property label="Account">
               {contact.account ? (
                 <Link href={`/accounts/${contact.account.id}`} className="underline">
                   {contact.account.name}
@@ -94,33 +93,33 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               ) : (
                 '—'
               )}
-            </Row>
-            <Row label="Role">{contact.contact_role ?? '—'}</Row>
-            <Row label="Added">{date(contact.created_at)}</Row>
+            </Property>
+            <Property label="Role">{contact.contact_role ?? '—'}</Property>
+            <Property label="Added">{date(contact.created_at)}</Property>
           </dl>
 
           {contact.notes && (
             <>
-              <h2 className="mt-6 mb-2 text-sm font-medium">Notes</h2>
+              <SectionTitle>Notes</SectionTitle>
               <p className="text-muted-foreground text-sm whitespace-pre-wrap">{contact.notes}</p>
             </>
           )}
         </section>
 
         <section>
-          <h2 className="mb-1 text-sm font-medium">Buildings</h2>
+          <SectionTitle>Buildings</SectionTitle>
           <p className="text-muted-foreground mb-3 text-xs">
             A portfolio manager can cover several sites.
           </p>
 
           {links && links.length > 0 ? (
-            <ul className="divide-border mb-4 overflow-hidden rounded-xl border text-sm">
+            <ul className="border-border mb-4 border-t text-sm">
               {links.map(
                 ({ building }) =>
                   building && (
                     <li
                       key={building.id}
-                      className="flex items-center justify-between gap-3 border-b p-3 last:border-b-0"
+                      className="row-hover border-border flex items-center justify-between gap-3 border-b px-2 py-2"
                     >
                       <div>
                         <Link href={`/buildings/${building.id}`} className="font-medium hover:underline">
@@ -170,11 +169,3 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
   )
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-4">
-      <dt className="text-muted-foreground w-24 shrink-0">{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  )
-}

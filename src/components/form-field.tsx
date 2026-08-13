@@ -21,13 +21,13 @@ export function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn('space-y-1.5', className)}>
-      <Label htmlFor={htmlFor} className="text-sm font-medium">
+    <div className={cn('space-y-1', className)}>
+      <Label htmlFor={htmlFor} className="text-muted-foreground text-[13px] font-normal">
         {label}
         {required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
-      {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+      {hint && <p className="text-muted-foreground/80 text-xs">{hint}</p>}
     </div>
   )
 }
@@ -43,8 +43,8 @@ export function Select({
   return (
     <select
       className={cn(
-        'border-input bg-background flex h-9 w-full rounded-md border px-3 py-1 text-base shadow-xs outline-none',
-        'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+        'bg-muted flex h-8 w-full rounded-[3px] border-0 px-2 text-base outline-none',
+        'focus-visible:ring-2 focus-visible:ring-ring',
         'disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
         className,
       )}

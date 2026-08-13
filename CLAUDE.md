@@ -236,6 +236,31 @@ The building form's monthly value calls `set_building_monthly_value()`; never wr
 
 Note: `next dev` appends an auto-generated block to the bottom of this file. Leave it committed.
 
+### The look and feel
+
+The UI follows a Notion-style design language — the *idiom*, not their branding or assets.
+Keep to it when adding screens:
+
+| | |
+|---|---|
+| Text | `#37352F` warm near-black, never pure black. Secondary text at 65% opacity |
+| Borders | `rgba(55,53,47,0.09)`. Hairlines between rows, not boxes around them |
+| Hover | `rgba(55,53,47,0.06)` background, 20ms — the main feedback mechanism. Use the `.row-hover` class |
+| Radius | 3px everywhere (`--radius`) |
+| Font | System stack, which is SF Pro on Mac and iPhone. No webfont, so text paints on the first frame |
+| Page titles | 40px bold, `.page-title` — a document heading, not a form label |
+| Inputs | Filled grey, no border. The block is the affordance; the ring appears only on keyboard focus |
+| Buttons | Small (h-7) and quiet. Blue `#2383e2` is reserved for the one primary action on a page |
+| Layout | Fixed 240px sidebar, content in a 4xl column with generous padding. Sidebar becomes a drawer under `md` |
+
+Shared building blocks live in `src/components/page-header.tsx`: `PageHeader` (breadcrumbs +
+title + actions), `RowList` / `Row` for lists, `Property` for key/value lines, `SectionTitle`,
+and `EmptyState`. Use them rather than hand-rolling markup, or the screens drift apart.
+
+Dropdowns are plain `<select>` (`Select` in `src/components/form-field.tsx`) on purpose: on a
+phone that opens the native iOS picker, which beats any custom menu when someone is standing
+in a car park.
+
 ### Gotchas already paid for
 
 **Naming a foreign key in a PostgREST embed.** `contacts` and `accounts` are joined *twice* — `contacts.account_id` and `accounts.primary_contact_id` — so `select('*, account:accounts(...)')` fails with "more than one relationship was found". Write `accounts!contacts_account_id_fkey(...)`. The same applies wherever two tables have two FKs (buildings↔profiles via `owner_id` and `secondary_owner_id`).

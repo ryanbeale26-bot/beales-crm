@@ -68,73 +68,97 @@ body {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* -----------------------------------------------------------------------------
+   Palette
+   -----------------------------------------------------------------------------
+   Warm near-black on white rather than pure #000 on #fff, quiet borders, and a
+   3px corner radius. The warmth is the whole trick: #37352F reads as softer and
+   more readable over a long working day than true black, and borders at 9%
+   opacity separate things without drawing boxes around them.
+   -------------------------------------------------------------------------- */
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: #ffffff;
+  --foreground: #37352f;
+  --card: #ffffff;
+  --card-foreground: #37352f;
+  --popover: #ffffff;
+  --popover-foreground: #37352f;
+
+  /* Primary actions only. Most buttons in this UI are quiet on purpose. */
+  --primary: #2383e2;
+  --primary-foreground: #ffffff;
+
+  --secondary: rgba(55, 53, 47, 0.06);
+  --secondary-foreground: #37352f;
+  --muted: rgba(55, 53, 47, 0.04);
+  --muted-foreground: rgba(55, 53, 47, 0.65);
+  --accent: rgba(55, 53, 47, 0.06);
+  --accent-foreground: #37352f;
+  --destructive: #eb5757;
+
+  --border: rgba(55, 53, 47, 0.09);
+  --input: rgba(55, 53, 47, 0.16);
+  --ring: rgba(35, 131, 226, 0.45);
+
+  /* Row hover. Instant, subtle, everywhere — the main feedback mechanism. */
+  --hover: rgba(55, 53, 47, 0.06);
+
+  --chart-1: #2383e2;
+  --chart-2: #0f7b6c;
+  --chart-3: #d9730d;
+  --chart-4: #9065b0;
+  --chart-5: #e03e3e;
+
+  --radius: 3px;
+
+  --sidebar: #f7f6f3;
+  --sidebar-foreground: rgba(55, 53, 47, 0.65);
+  --sidebar-primary: #2383e2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(55, 53, 47, 0.08);
+  --sidebar-accent-foreground: #37352f;
+  --sidebar-border: rgba(55, 53, 47, 0.09);
+  --sidebar-ring: rgba(35, 131, 226, 0.45);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #191919;
+  --foreground: rgba(255, 255, 255, 0.81);
+  --card: #202020;
+  --card-foreground: rgba(255, 255, 255, 0.81);
+  --popover: #252525;
+  --popover-foreground: rgba(255, 255, 255, 0.81);
+  --primary: #2383e2;
+  --primary-foreground: #ffffff;
+  --secondary: rgba(255, 255, 255, 0.055);
+  --secondary-foreground: rgba(255, 255, 255, 0.81);
+  --muted: rgba(255, 255, 255, 0.04);
+  --muted-foreground: rgba(255, 255, 255, 0.443);
+  --accent: rgba(255, 255, 255, 0.055);
+  --accent-foreground: rgba(255, 255, 255, 0.81);
+  --destructive: #ff7369;
+  --border: rgba(255, 255, 255, 0.094);
+  --input: rgba(255, 255, 255, 0.14);
+  --ring: rgba(35, 131, 226, 0.5);
+  --hover: rgba(255, 255, 255, 0.055);
+  --chart-1: #529cca;
+  --chart-2: #4dab9a;
+  --chart-3: #ffa344;
+  --chart-4: #9a6dd7;
+  --chart-5: #ff7369;
+  --sidebar: #202020;
+  --sidebar-foreground: rgba(255, 255, 255, 0.443);
+  --sidebar-primary: #2383e2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(255, 255, 255, 0.055);
+  --sidebar-accent-foreground: rgba(255, 255, 255, 0.81);
+  --sidebar-border: rgba(255, 255, 255, 0.094);
+  --sidebar-ring: rgba(35, 131, 226, 0.5);
+}
+
+@theme inline {
+  --color-hover: var(--hover);
 }
 
 @layer base {
@@ -143,8 +167,39 @@ body {
   }
   body {
     @apply bg-background text-foreground;
+    font-size: 16px;
+    line-height: 1.5;
   }
   html {
     @apply font-sans;
   }
+  /* Headings are semibold and tight, never bold and airy. */
+  h1,
+  h2,
+  h3 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* A page title, the size of a document heading rather than a form label. */
+.page-title {
+  font-size: 40px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 640px) {
+  .page-title {
+    font-size: 28px;
+  }
+}
+
+/* Rows in a list: no border box, just a hairline and an instant hover. */
+.row-hover {
+  transition: background 20ms ease-in;
+}
+.row-hover:hover {
+  background: var(--hover);
 }

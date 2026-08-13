@@ -1,7 +1,6 @@
 import Link from 'next/link'
 
-import { PageHeader, EmptyState } from '@/components/page-header'
-import { Badge } from '@/components/ui/badge'
+import { EmptyState, PageHeader, Row, RowList } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ACCOUNT_STATUS_LABELS, money } from '@/lib/format'
@@ -24,12 +23,10 @@ export default async function AccountsPage({
   if (q) query = query.ilike('name', `%${q}%`)
   if (status) query = query.eq('status', status as 'prospect' | 'active' | 'former')
 
-  const { data: accounts, error } = await query
-
-  // Buildings and current value, to roll up per account without N queries.
-  const { data: values } = await supabase
-    .from('v_building_current_value')
-    .select('account_id, monthly_value')
+  const [{ data: accounts, error }, { data: values }] = await Promise.all([
+    query,
+    supabase.from('v_building_current_value').select('account_id, monthly_value'),
+  ])
 
   const rollup = new Map<string, { buildings: number; mrr: number }>()
   for (const row of values ?? []) {
@@ -40,25 +37,22 @@ export default async function AccountsPage({
     rollup.set(row.account_id, current)
   }
 
-  const totalMrr = [...rollup.values()].reduce((sum, r) => sum + r.mrr, 0)
+  const shown = accounts ?? []
+  const totalMrr = shown.reduce((sum, a) => sum + (rollup.get(a.id)?.mrr ?? 0), 0)
 
   return (
     <div>
       <PageHeader
         title="Accounts"
-        subtitle={
-          accounts
-            ? `${accounts.length} ${accounts.length === 1 ? 'account' : 'accounts'} · ${money(totalMrr)} per month`
-            : undefined
-        }
+        subtitle={`${shown.length} ${shown.length === 1 ? 'account' : 'accounts'} · ${money(totalMrr)} per month`}
         action={
           <Button asChild>
-            <Link href="/accounts/new">New account</Link>
+            <Link href="/accounts/new">New</Link>
           </Button>
         }
       />
 
-      <form className="mb-5 flex flex-wrap gap-2">
+      <form className="mb-4 flex flex-wrap gap-2">
         <Input
           name="q"
           defaultValue={q ?? ''}
@@ -70,7 +64,7 @@ export default async function AccountsPage({
           name="status"
           defaultValue={status ?? ''}
           aria-label="Filter by status"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+          className="bg-muted h-8 rounded-[3px] border-0 px-2 text-sm outline-none"
         >
           <option value="">All statuses</option>
           {Object.entries(ACCOUNT_STATUS_LABELS).map(([value, label]) => (
@@ -89,59 +83,49 @@ export default async function AccountsPage({
         )}
       </form>
 
-      {error && (
-        <p className="text-destructive text-sm">Could not load accounts: {error.message}</p>
-      )}
+      {error && <p className="text-destructive text-sm">Could not load accounts: {error.message}</p>}
 
-      {accounts && accounts.length === 0 && (
+      {shown.length === 0 ? (
         <EmptyState title={q || status ? 'Nothing matches that.' : 'No accounts yet.'}>
           {q || status ? (
             <Link href="/accounts" className="underline">
               Clear the filters
             </Link>
           ) : (
-            <>
-              Add your first customer, then put its buildings underneath it.{' '}
-              <Link href="/accounts/new" className="underline">
-                New account
-              </Link>
-            </>
+            <Link href="/accounts/new" className="underline">
+              Add your first customer
+            </Link>
           )}
         </EmptyState>
-      )}
-
-      {accounts && accounts.length > 0 && (
-        <div className="divide-border overflow-hidden rounded-xl border">
-          {accounts.map((account) => {
+      ) : (
+        <RowList>
+          {shown.map((account) => {
             const roll = rollup.get(account.id)
             return (
-              <Link
+              <Row
                 key={account.id}
                 href={`/accounts/${account.id}`}
-                className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b p-4 last:border-b-0"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">{account.name}</span>
-                    <Badge variant={account.status === 'active' ? 'default' : 'secondary'}>
+                title={account.name}
+                meta={[account.account_type, account.owner?.full_name].filter(Boolean).join(' · ')}
+                badges={
+                  account.status !== 'active' ? (
+                    <span className="text-muted-foreground bg-muted rounded-[3px] px-1.5 py-0.5 text-xs">
                       {ACCOUNT_STATUS_LABELS[account.status]}
-                    </Badge>
-                  </div>
-                  <p className="text-muted-foreground mt-0.5 text-sm">
-                    {account.account_type ?? 'No type'}
-                    {account.owner?.full_name && ` · ${account.owner.full_name}`}
-                  </p>
-                </div>
-                <div className="text-right text-sm">
-                  <div className="font-medium">{money(roll?.mrr ?? 0)}/mo</div>
-                  <div className="text-muted-foreground">
-                    {roll?.buildings ?? 0} {roll?.buildings === 1 ? 'building' : 'buildings'}
-                  </div>
-                </div>
-              </Link>
+                    </span>
+                  ) : null
+                }
+                right={
+                  <>
+                    <div>{roll?.mrr ? `${money(roll.mrr)}/mo` : '—'}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {roll?.buildings ?? 0} {roll?.buildings === 1 ? 'building' : 'buildings'}
+                    </div>
+                  </>
+                }
+              />
             )
           })}
-        </div>
+        </RowList>
       )}
     </div>
   )

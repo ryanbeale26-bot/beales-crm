@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-import { EmptyState, PageHeader } from '@/components/page-header'
+import { EmptyState, PageHeader, Row, RowList } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fullName } from '@/lib/format'
@@ -78,24 +78,17 @@ export default async function ContactsPage({
           )}
         </EmptyState>
       ) : (
-        <div className="divide-border overflow-hidden rounded-xl border">
+        <RowList>
           {contacts?.map((c) => (
-            <Link
+            <Row
               key={c.id}
               href={`/contacts/${c.id}`}
-              className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b p-4 last:border-b-0"
-            >
-              <div className="min-w-0">
-                <div className="font-medium">{fullName(c)}</div>
-                <p className="text-muted-foreground mt-0.5 text-sm">
-                  {[c.title, c.account?.name, c.contact_role].filter(Boolean).join(' · ') ||
-                    'No details'}
-                </p>
-              </div>
-              <div className="text-muted-foreground text-sm">{c.email ?? c.phone ?? ''}</div>
-            </Link>
+              title={fullName(c)}
+              meta={[c.title, c.account?.name, c.contact_role].filter(Boolean).join(' · ')}
+              right={<span className="text-muted-foreground">{c.email ?? c.phone ?? ''}</span>}
+            />
           ))}
-        </div>
+        </RowList>
       )}
     </div>
   )

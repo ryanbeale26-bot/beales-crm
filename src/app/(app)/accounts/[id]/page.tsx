@@ -1,8 +1,13 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
-import { EmptyState, PageHeader } from '@/components/page-header'
-import { Badge } from '@/components/ui/badge'
+import {
+  EmptyState,
+  PageHeader,
+  Property,
+  Row,
+  RowList,
+} from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import {
   ACCOUNT_STATUS_LABELS,
@@ -53,7 +58,7 @@ export default async function AccountPage({
   const [{ data: buildings }, { data: values }, { data: contacts }] = await Promise.all([
     supabase
       .from('buildings')
-      .select('id, name, city, state, status, entity, square_footage, health_score, contract_start_date')
+      .select('id, name, city, state, status, entity, square_footage, health_score')
       .eq('account_id', id)
       .is('deleted_at', null)
       .order('name'),
@@ -77,119 +82,125 @@ export default async function AccountPage({
     <div>
       <PageHeader
         title={account.name}
-        backHref="/accounts"
-        backLabel="Accounts"
-        subtitle={
-          <span className="flex flex-wrap items-center gap-2">
-            <Badge variant={account.status === 'active' ? 'default' : 'secondary'}>
-              {ACCOUNT_STATUS_LABELS[account.status]}
-            </Badge>
-            <span>
-              {money(mrr)}/mo · {money(mrr * 12)}/yr · {buildings?.length ?? 0} buildings
-              {totalSf > 0 && ` · ${squareFeet(totalSf)}`}
-            </span>
-          </span>
-        }
+        breadcrumbs={[{ label: 'Accounts', href: '/accounts' }, { label: account.name }]}
+        subtitle={`${money(mrr)}/mo · ${money(mrr * 12)}/yr · ${buildings?.length ?? 0} ${
+          buildings?.length === 1 ? 'building' : 'buildings'
+        }${totalSf > 0 ? ` · ${squareFeet(totalSf)}` : ''}`}
         action={
-          <div className="flex gap-2">
+          <>
             <Button variant="outline" asChild>
               <Link href={`/accounts/${id}/edit`}>Edit</Link>
             </Button>
             <Button asChild>
               <Link href={`/buildings/new?account=${id}`}>Add building</Link>
             </Button>
-          </div>
+          </>
         }
       />
 
-      <nav className="mb-6 flex gap-1 overflow-x-auto border-b">
+      <nav className="border-border mb-5 flex gap-4 overflow-x-auto border-b text-sm">
         {TABS.map((t) => (
           <Link
             key={t}
             href={`/accounts/${id}?tab=${t}`}
             className={cn(
-              '-mb-px border-b-2 px-3 py-2 text-sm whitespace-nowrap',
+              '-mb-px border-b-2 pb-2 whitespace-nowrap',
               t === tab
-                ? 'border-primary text-foreground font-medium'
+                ? 'border-foreground text-foreground font-medium'
                 : 'text-muted-foreground hover:text-foreground border-transparent',
             )}
           >
             {t}
-            {t === 'Buildings' && buildings?.length ? ` (${buildings.length})` : ''}
-            {t === 'Contacts' && contacts?.length ? ` (${contacts.length})` : ''}
+            {t === 'Buildings' && buildings?.length ? (
+              <span className="text-muted-foreground ml-1.5 font-normal">{buildings.length}</span>
+            ) : null}
+            {t === 'Contacts' && contacts?.length ? (
+              <span className="text-muted-foreground ml-1.5 font-normal">{contacts.length}</span>
+            ) : null}
           </Link>
         ))}
       </nav>
 
       {tab === 'Overview' && (
-        <div className="grid gap-6 sm:grid-cols-2">
-          <dl className="space-y-3 text-sm">
-            <Row label="Type">{account.account_type ?? '—'}</Row>
-            <Row label="Owner">
+        <div className="max-w-2xl">
+          <dl>
+            <Property label="Status">{ACCOUNT_STATUS_LABELS[account.status]}</Property>
+            <Property label="Type">{account.account_type ?? '—'}</Property>
+            <Property label="Owner">
               {account.owner?.full_name ?? '—'}
               {account.owner && !account.owner.is_active && (
                 <span className="text-muted-foreground"> (no longer here)</span>
               )}
-            </Row>
-            <Row label="Second owner">{account.secondary_owner?.full_name ?? '—'}</Row>
-            <Row label="Head office">
+            </Property>
+            <Property label="Second owner">{account.secondary_owner?.full_name ?? '—'}</Property>
+            <Property label="Head office">
               {[account.hq_address_line1, account.hq_city, account.hq_state, account.hq_postal_code]
                 .filter(Boolean)
                 .join(', ') || '—'}
-            </Row>
-            <Row label="Added">{date(account.created_at)}</Row>
+            </Property>
+            <Property label="Added">{date(account.created_at)}</Property>
           </dl>
 
-          <div>
-            <h2 className="mb-2 text-sm font-medium">Notes</h2>
+          <div className="border-border mt-6 border-t pt-4">
             <p className="text-muted-foreground text-sm whitespace-pre-wrap">
-              {account.notes || 'None yet.'}
+              {account.notes || 'No notes yet.'}
             </p>
-            {withoutValue > 0 && (
-              <p className="bg-muted mt-4 rounded-lg p-3 text-sm">
-                {withoutValue} of {buildings?.length} buildings have no monthly value, so this
-                account&rsquo;s revenue is understated.
-              </p>
-            )}
           </div>
+
+          {withoutValue > 0 && (
+            <p className="bg-muted text-muted-foreground mt-6 rounded-[3px] p-3 text-sm">
+              {withoutValue} of {buildings?.length} buildings have no monthly value, so this
+              account&rsquo;s revenue is understated.
+            </p>
+          )}
         </div>
       )}
 
       {tab === 'Buildings' &&
         (buildings && buildings.length > 0 ? (
-          <div className="divide-border overflow-hidden rounded-xl border">
+          <RowList>
             {buildings.map((b) => (
-              <Link
+              <Row
                 key={b.id}
                 href={`/buildings/${b.id}`}
-                className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b p-4 last:border-b-0"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{b.name}</span>
-                    <Badge variant={b.status === 'active' ? 'default' : 'secondary'}>
-                      {BUILDING_STATUS_LABELS[b.status]}
-                    </Badge>
-                    {b.health_score && (
-                      <Badge variant={b.health_score === 'at_risk' ? 'destructive' : 'outline'}>
-                        {HEALTH_LABELS[b.health_score]}
-                      </Badge>
+                title={b.name}
+                meta={[
+                  [b.city, b.state].filter(Boolean).join(', ') || null,
+                  ENTITY_LABELS[b.entity],
+                  b.square_footage ? squareFeet(b.square_footage) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                badges={
+                  <>
+                    {b.status !== 'active' && (
+                      <span className="text-muted-foreground bg-muted rounded-[3px] px-1.5 py-0.5 text-xs">
+                        {BUILDING_STATUS_LABELS[b.status]}
+                      </span>
                     )}
-                  </div>
-                  <p className="text-muted-foreground mt-0.5 text-sm">
-                    {[b.city, b.state].filter(Boolean).join(', ') || 'No address'} ·{' '}
-                    {ENTITY_LABELS[b.entity]}
-                    {b.square_footage ? ` · ${squareFeet(b.square_footage)}` : ''}
-                  </p>
-                </div>
-                <div className="text-right text-sm font-medium">
-                  {valueByBuilding.get(b.id)
-                    ? `${money(valueByBuilding.get(b.id))}/mo`
-                    : <span className="text-muted-foreground font-normal">No value set</span>}
-                </div>
-              </Link>
+                    {b.health_score && (
+                      <span
+                        className={
+                          b.health_score === 'at_risk'
+                            ? 'text-destructive bg-destructive/10 rounded-[3px] px-1.5 py-0.5 text-xs'
+                            : 'text-muted-foreground bg-muted rounded-[3px] px-1.5 py-0.5 text-xs'
+                        }
+                      >
+                        {HEALTH_LABELS[b.health_score]}
+                      </span>
+                    )}
+                  </>
+                }
+                right={
+                  valueByBuilding.get(b.id) ? (
+                    `${money(valueByBuilding.get(b.id))}/mo`
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )
+                }
+              />
             ))}
-          </div>
+          </RowList>
         ) : (
           <EmptyState title="No buildings on this account yet.">
             <Link href={`/buildings/new?account=${id}`} className="underline">
@@ -200,23 +211,17 @@ export default async function AccountPage({
 
       {tab === 'Contacts' &&
         (contacts && contacts.length > 0 ? (
-          <div className="divide-border overflow-hidden rounded-xl border">
+          <RowList>
             {contacts.map((c) => (
-              <Link
+              <Row
                 key={c.id}
                 href={`/contacts/${c.id}`}
-                className="hover:bg-muted/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b p-4 last:border-b-0"
-              >
-                <div>
-                  <div className="font-medium">{fullName(c)}</div>
-                  <p className="text-muted-foreground text-sm">
-                    {[c.title, c.contact_role].filter(Boolean).join(' · ') || 'No title'}
-                  </p>
-                </div>
-                <div className="text-muted-foreground text-sm">{c.email ?? c.phone ?? ''}</div>
-              </Link>
+                title={fullName(c)}
+                meta={[c.title, c.contact_role].filter(Boolean).join(' · ')}
+                right={<span className="text-muted-foreground">{c.email ?? c.phone ?? ''}</span>}
+              />
             ))}
-          </div>
+          </RowList>
         ) : (
           <EmptyState title="No contacts on this account yet.">
             <Link href={`/contacts/new?account=${id}`} className="underline">
@@ -237,15 +242,6 @@ export default async function AccountPage({
           Deals for this account will show here, with the stage they&rsquo;re in.
         </EmptyState>
       )}
-    </div>
-  )
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-4">
-      <dt className="text-muted-foreground w-32 shrink-0">{label}</dt>
-      <dd>{children}</dd>
     </div>
   )
 }
