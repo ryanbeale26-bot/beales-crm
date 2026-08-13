@@ -20,6 +20,14 @@ export const viewport: Viewport = {
  * and Arial / Open Sans for body, so body text uses the stack below — Arial is
  * on every Mac, iPhone and PC already, which means body copy paints on the
  * first frame with nothing to download.
+ *
+ * NOTE: `next build` is pinned to `--webpack` in package.json because of this
+ * import. Turbopack in Next 16.3.0 downloads the Google Fonts CSS and then
+ * cannot resolve the font files it references, so a *cold* production build
+ * fails with "Can't resolve '@vercel/turbopack-next/internal/font/google/font'".
+ * A warm .next hides it, which is why it only surfaced on the first clean
+ * build. See CLAUDE.md. The durable fix is to self-host the woff2 files with
+ * next/font/local, which also removes Google from the build path entirely.
  */
 const montserrat = Montserrat({
   subsets: ['latin'],

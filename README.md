@@ -49,6 +49,54 @@ unless they should see pay rates and margin.
 npm run dev
 ```
 
+## Deploying to Vercel
+
+Do these in order. Steps 2–4 need your Vercel and Supabase accounts, so they are
+yours to run.
+
+**1. Push.** Vercel deploys from GitHub, so nothing ships until `main` is pushed.
+
+```bash
+git push origin main
+```
+
+**2. Import the repo.** At [vercel.com/new](https://vercel.com/new), pick
+`beales-crm`. It detects Next.js on its own — no build settings to change, and
+no `vercel.json` needed. **Do not deploy yet**; add the variables first, or the
+first build ships an app that cannot reach the database.
+
+**3. Add three environment variables**, for Production, Preview and Development:
+
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://pjcitahktwnawucoznhk.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The anon / publishable key, same as `.env.local` |
+| `NEXT_PUBLIC_SITE_URL` | The real domain, e.g. `https://beales-crm.vercel.app`, **no trailing slash** |
+
+**Do not add `SUPABASE_SERVICE_ROLE_KEY`.** Nothing under `src/` reads it — only
+the local scripts do — and it bypasses every security rule in the database. It
+has no business in a web host's environment.
+
+`NEXT_PUBLIC_SITE_URL` is a chicken-and-egg: you need the domain Vercel assigns.
+Deploy once, copy the domain, set the variable, then redeploy.
+
+**4. Tell Supabase about the domain.** Dashboard → Authentication → URL
+Configuration:
+
+- **Site URL**: the same domain as `NEXT_PUBLIC_SITE_URL`
+- **Redirect URLs**: add `https://your-domain.vercel.app/**`
+
+Skip this and password sign-in still works, but every magic link and password
+reset bounces — which is the one route back in for anyone locked out.
+
+**5. Check it end to end.** Sign in on a phone, load `/dashboard`, then request a
+magic link and confirm it lands back on the deployed site rather than
+`localhost:3000`.
+
+Migrations are *not* run by Vercel. `npx supabase db push` from your machine
+remains the only way schema reaches the database, deliberately — a deploy should
+never be able to alter the shape of live data.
+
 ## Everyday commands
 
 | Command | What it does |

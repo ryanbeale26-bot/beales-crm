@@ -497,7 +497,32 @@ in a car park.
 
 **A user cannot be hard-deleted once they have changed anything.** `audit_log.changed_by` references `profiles`, deliberately — deleting the person would erase who did what. **Deactivate instead**: `npm run user:create -- --email … --name … --inactive`. That blocks sign-in and hides all data from them, while their name still shows on records they owned.
 
-**This project lives in `~/Desktop`, which is synced to iCloud Drive.** iCloud created conflict copies (`routes.d 2.ts`) inside `.next/`, which broke `tsc` with duplicate-identifier errors. Fix is `rm -rf .next`. Worth moving the project somewhere outside Desktop/Documents — iCloud should not be syncing `node_modules` and build output.
+**`next build` is pinned to `--webpack`, and must stay that way for now.** Turbopack in Next
+16.3.0 downloads the Google Fonts CSS for the `Montserrat` import in `src/app/layout.tsx` and
+then cannot resolve the font files that CSS references, so a **cold** production build dies with
+`Can't resolve '@vercel/turbopack-next/internal/font/google/font'`. A warm `.next` hides it
+completely — which is exactly why it went unnoticed until the first clean build, and why it would
+have failed on Vercel (whose builds are always cold) while passing locally. 16.3.0 is the newest
+stable; there is no released fix. `next dev` still uses Turbopack and is unaffected.
+
+The durable fix is to **self-host the two Montserrat weights with `next/font/local`**, which also
+takes Google off the build path entirely. Do that before removing the `--webpack` flag, and
+verify with `rm -rf .next && npm run build`, never with a warm cache.
+
+**This project lives in `~/Desktop`, which is synced to iCloud Drive — and it is now corrupting
+`node_modules`, not just build output.** It began as conflict copies (`routes.d 2.ts`) inside
+`.next/`, fixed with `rm -rf .next`. It has since produced `node_modules/next/font/local/index 2.js`
+and **deleted `node_modules/@vercel/` entirely**, which is what first surfaced the font error above
+and sent a session chasing the wrong cause. The npm cache at `~/.npm/_cacache` was damaged too, so
+the reinstall needed `npm ci --cache <some other dir>`.
+
+**Move the project out of `~/Desktop` and `~/Documents`.** This is no longer a nuisance; it
+silently breaks the build in ways that look like code bugs. Until then, when anything fails
+inexplicably, check first:
+
+```bash
+find node_modules -maxdepth 4 -name "* 2*" | head
+```
 
 ---
 
@@ -519,6 +544,9 @@ in a car park.
 - [x] ~~Private GitHub repo~~ — created.
 - [x] ~~Login email addresses for the other four~~ — captured in the roster above.
 - [ ] Confirm Victor Melo's address. Ryan wrote `vmelo@beales..com`, which is a typo; assumed `vmelo@bealesllc.com`.
+- [ ] **Deploy to Vercel** — the repo is pushed and the build is verified cold. Steps 2–5 in
+      `README.md` need Ryan's Vercel and Supabase accounts. The Supabase redirect-URL step is the
+      one that is easy to skip and breaks every magic link if you do.
 - [ ] Bob Mulligan's legal first name, for the Phase 7 payroll parser — Paychex will say "Robert" or similar where the team says "Bob", and there is already another Robert Mulligan to tell him apart from.
 - [ ] Vercel project — not set up yet.
 
