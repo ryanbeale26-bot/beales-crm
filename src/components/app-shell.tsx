@@ -13,6 +13,7 @@ const NAV = [
   { label: 'Buildings', href: '/buildings', icon: '▤' },
   { label: 'Contacts', href: '/contacts', icon: '☺' },
   { label: 'Employees', href: '/employees', icon: '⚑' },
+  { label: 'Import', href: '/admin/import', icon: '↥' },
 ]
 
 const LATER = ['Opportunities', 'Activity', 'Projects', 'Reports']

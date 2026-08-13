@@ -118,7 +118,7 @@ Six tabs, the source of truth for all existing data. **Ask for actual headers of
 
 ### What the workbook actually contains (read 2026-08-12)
 
-The file lives at `private-data/Beales_CRM.xlsx` (git-ignored). **Every tab has its headers on row 4** — rows 1–3 are title banners. Row counts: Pipeline 52, Active Clients 38 + a `TOTAL ACTIVE ARR` row that must be skipped, Contacts ~57, Activity Log ~670, Won/Lost 19.
+The file lives at `private-data/Beales_CRM.xlsx` (git-ignored). **Every tab has its headers on row 4** — rows 1–3 are title banners. Row counts: Pipeline 52, Active Clients 38 + a `TOTAL ACTIVE ARR` row that must be skipped, Contacts 95, Activity Log ~670, Won/Lost 19.
 
 **Real deal stages**, with the win probabilities from `0-Dashboard`:
 
@@ -168,7 +168,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 - [x] **Phase 0** — Scaffold, this file, full schema written and verified, open questions
 - [x] **Phase 1a** — Migrations applied, six profiles created, accounts / buildings / contacts CRUD, account detail page with tabs
-- [ ] **Phase 1b** — CSV importer (upload → map columns → preview → confirm). Migrate tabs 2 and 3.
+- [x] **Phase 1b** — Importer built (upload → map columns → preview → confirm → undo). Tabs 2 and 3 supported; **not yet run for real**
 - [ ] **Phase 2** — Quick-add activity logging, timelines, activity feed with filters. Migrate tab 4. *This is the daily-habit feature — the whole project rests on it.*
 - [ ] **Phase 3** — Opportunities kanban, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report. Migrate tabs 1 and 5.
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects
@@ -178,7 +178,7 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 
 ## Current status
 
-**Phase:** 1a built and self-tested, awaiting Ryan's sign-off. Phase 1b (the importer) next.
+**Phase:** 1b built and self-tested end to end. Ryan has not yet run the real import.
 **Last session:** 2026-08-12
 
 **What works right now:** Next.js 16 + TypeScript + Tailwind 4 + shadcn/ui. Login by
@@ -215,11 +215,35 @@ plus one that began is exactly how the staff-movement report detects a move.
 **Data note:** Ryan created `Fox Rock Properties` and its building `91 Longwater Drive`
 by hand on 2026-08-12. They are real. Any cleanup script must not delete them.
 
-**Next action (Phase 1b):** the CSV/Excel importer — upload, map columns, preview, confirm.
-It must derive accounts by splitting `Client Name` on the em-dash, parse `Service Scope`
-for address and square footage, skip the `TOTAL ACTIVE ARR` row, and let Ryan merge
-proposed account groupings by hand before anything is written. Every row it creates carries
-`import_batch_id` so a bad run is one delete.
+**What Phase 1b shipped:** `/admin/import`, admin-only. Upload an .xlsx or .csv → the sheet
+and column mapping are guessed and shown for correction → a preview lists every proposed
+account and building with per-row warnings → confirm writes it → every batch can be undone.
+
+Tested end to end against the real workbook: 37 buildings under 23 accounts, $44,648 of
+monthly value, 1 totals row skipped, zero row errors. Undo restored the database exactly,
+including leaving Ryan's pre-existing `Fox Rock Properties` account intact — the importer
+*reused* it rather than creating it, so it never carried the batch stamp. **The real import
+has not been run; Ryan does that when he is happy with the preview.**
+
+How it works, if you need to change it:
+
+| File | Job |
+|---|---|
+| `src/lib/import/workbook.ts` | Reads xlsx/csv into rows. Detects the header row by counting **distinct** values — a merged title banner reports the same string across every column and would otherwise win |
+| `src/lib/import/definitions.ts` | What each importer needs, and the header fragments used to guess the mapping |
+| `src/lib/import/parse-rows.ts` | Splitting client names, parsing addresses, money, dates, health, owners |
+| `src/lib/import/active-clients.ts` | Row → proposed account/building/contact, with warnings |
+| `src/app/(app)/admin/import/actions.ts` | Parse, preview, commit, roll back |
+
+Rules baked in, worth keeping: the original `Service Scope` text is always stored on the
+building, so nothing the parser missed is lost; contract values go through
+`set_building_monthly_value()` so revenue history is built properly; contacts dedupe on
+lower-cased email; accounts match existing ones case-insensitively so a re-import extends
+rather than duplicates.
+
+Two things Ryan will want to fix in the preview: the em-dash split reads
+`Cancer Center — Dana-Farber / Brigham` as account "Cancer Center", and the several South
+Shore Health entities arrive as separate accounts. Both are one rename each in the merge step.
 
 The building form's monthly value calls `set_building_monthly_value()`; never write to
 `building_contract_periods` directly.
