@@ -33,14 +33,15 @@ for (const [table, n] of Object.entries(expected)) {
   check(`${table} has ${n} rows`, count === n, error ? error.message : `got ${count}`)
 }
 
-console.log('\nTables exist and are empty, ready for real data')
+console.log('\nEvery table exists and is readable')
 for (const table of ['accounts', 'buildings', 'building_contract_periods', 'contacts',
                      'contact_buildings', 'employees', 'employee_assignments',
                      'employee_assignment_rates', 'opportunities', 'activities',
                      'projects', 'attachments', 'staffing_reports', 'inspections',
                      'work_orders', 'audit_log', 'import_batches']) {
+  // Row counts are reported, not asserted — there is real data in here now.
   const { count, error } = await admin.from(table).select('*', { count: 'exact', head: true })
-  check(`${table}`, !error && count === 0, error ? error.message : `has ${count} rows`)
+  check(`${table} (${count} rows)`, !error, error?.message)
 }
 
 console.log('\nThe team')
