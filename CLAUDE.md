@@ -173,21 +173,48 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 3** — Opportunities board, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report, admin reference-data editor. Importers for tabs 1 and 5 built and rehearsed; **the real imports are Ryan's to run**
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects. **Partly built already:** the `employees` / `employee_assignments` schema, the `/employees` list and form, and assigning someone to a building all shipped alongside Phase 1a. What is missing is an employee detail page, the staff-movement report on top of `v_staff_movement`, and projects entirely — `projects` and `project_employees` have a schema, 10 seeded `project_types`, and no screens at all. **Blocked on where employee data comes from:** the workbook has no employee tab and all three tables are empty
 - [x] **Phase 5** — Revenue views in Postgres, dashboard mirroring tab 0, six reports with CSV export, and a correction path that fixes a wrong contract figure without inventing a price change
+- [ ] **Phase 5b** — The gap-filler. Export blanks to CSV → fill in Excel → upload → preview →
+      commit → undo, matching on record **id** rather than fuzzy names. Ryan chose all four
+      scopes: buildings (value, segment, hours, end date), open deals (value, close date,
+      account), contacts (link to account), accounts (primary contact, owner). **This is next.**
+      Every number in the app is understated until it exists — see the gap census below
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
 - [ ] **Phase 7+** — Integrations, one per phase, in the order above
 
 ## Current status
 
-**Phase:** 5 shipped. The dashboard, six reports and the revenue views are live against real
-data. **All five spreadsheet tabs are imported** — 22 accounts, 38 buildings, 97 contacts,
-667 activities, 55 opportunities. The Google Sheet is no longer the source of truth for
-anything the CRM holds.
+**Phase:** 5 shipped and **deployed**. The dashboard, six reports and the revenue views are live
+at `https://beales-crm.vercel.app` against real data, and Ryan has signed in. **All five
+spreadsheet tabs are imported** — 22 accounts, 38 buildings, 97 contacts, 667 activities,
+55 opportunities. The Google Sheet is no longer the source of truth for anything the CRM holds.
 **Last session:** 2026-08-13
+
+**Next: Phase 5b, the gap-filler.** The app is now feature-rich and data-poor. Every report opens
+by apologising for its own numbers, which is honest but is not what the other four should meet on
+day one. See the gap census below — that, not new features, is what unlocks the rest.
 
 Live counts: 5 committed import batches, 8 win reasons (Ryan kept every phrase the Won/Loss
 preview offered), 1 competitor (Janitronics). **`employees`, `employee_assignments` and `projects`
 are all still empty** — nothing in the workbook feeds them, which is the first thing Phase 4 has
 to solve.
+
+### The gap census — what Phase 5b has to fix (measured 2026-08-13)
+
+| Records | Missing |
+|---|---|
+| Buildings with no contract value | **27 of 38** |
+| Buildings with no property type / segment | **38 of 38** |
+| Buildings with no contracted hours | **37 of 38** |
+| Buildings with no contract end date | 30 of 38 |
+| Buildings with no square footage | 25 of 38 |
+| Open deals with no monthly value | **28 of 30** |
+| Open deals whose expected close is absent or in the past | **28 of 30** |
+| Open deals not linked to an account | 28 of 30 |
+| Contacts not linked to an account | **63 of 97** |
+| Accounts with no primary contact | **22 of 22** |
+| Accounts / buildings with no owner | 1 each |
+
+Re-run that census before building anything, since Ryan may have filled some in by hand.
 
 ### The numbers the app currently reports, and what each one is missing
 
@@ -240,9 +267,25 @@ shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`)
 `npm run db:check-remote` confirms against the live database that a stranger holding the
 public key can read and write nothing.
 
-**Accounts created:** Ryan only. The other four are pending (see Open questions).
+**Accounts:** all five are created and active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
+Victor Melo. Earlier versions of this file said only Ryan's existed; that was stale. Brendan
+Mulligan is a sixth profile, deactivated. There is also a seventh, `qa-phase5@bealesllc.com`,
+**deactivated, do not delete** — it holds the audit row for the 91 Longwater Drive contract
+correction, and removing the profile would erase who made that change.
 
-**Not set up yet:** Vercel. The app runs locally only.
+**Live at `https://beales-crm.vercel.app`** since 2026-08-13, deployed from GitHub `main`. Two
+environment variables are set on Vercel (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
+and **`SUPABASE_SERVICE_ROLE_KEY` is deliberately not among them** — nothing under `src/` reads it
+and it bypasses every RLS policy. `NEXT_PUBLIC_SITE_URL` is not set either: `siteUrl()` falls back
+to Vercel's own `VERCEL_PROJECT_PRODUCTION_URL`, so magic links work without anyone typing a
+domain. Set it only if a custom domain arrives.
+
+Supabase Authentication → URL Configuration has the Vercel domain as Site URL and
+`https://beales-crm.vercel.app/**` in Redirect URLs. Without that, password sign-in still works
+but every magic link and password reset bounces.
+
+**Migrations are never run by Vercel.** `npx supabase db push` from a laptop remains the only way
+schema reaches the database — a deploy must not be able to change the shape of live data.
 
 **What Phase 1a shipped:** accounts list (with MRR roll-up) and detail page with five tabs;
 buildings list, detail with contract-value history, and form; contacts list, detail, and the
@@ -428,6 +471,13 @@ a contract that ended three months ago for exactly this reason.
 | `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
 | `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
 | `npx supabase db push` | Applies migrations to the real Supabase project |
+| `git push origin main` | **Deploys.** Vercel builds from `main`, so a push is a release |
+
+`.claude/launch.json` tells Claude Code how to start the dev server (`npm run dev`, port 3000).
+Committed on purpose so a future session can run the app without being asked.
+
+`npm run build` is pinned to `--webpack`; see the gotcha below before changing it. Always verify a
+build with `rm -rf .next` first — a warm cache hides the one failure mode that matters.
 
 Note: `next dev` appends an auto-generated block to the bottom of this file. Leave it committed.
 
@@ -511,18 +561,38 @@ verify with `rm -rf .next && npm run build`, never with a warm cache.
 
 **This project lives in `~/Desktop`, which is synced to iCloud Drive — and it is now corrupting
 `node_modules`, not just build output.** It began as conflict copies (`routes.d 2.ts`) inside
-`.next/`, fixed with `rm -rf .next`. It has since produced `node_modules/next/font/local/index 2.js`
-and **deleted `node_modules/@vercel/` entirely**, which is what first surfaced the font error above
-and sent a session chasing the wrong cause. The npm cache at `~/.npm/_cacache` was damaged too, so
-the reinstall needed `npm ci --cache <some other dir>`.
+`.next/`, fixed with `rm -rf .next`.
 
-**Move the project out of `~/Desktop` and `~/Documents`.** This is no longer a nuisance; it
-silently breaks the build in ways that look like code bugs. Until then, when anything fails
-inexplicably, check first:
+**It corrupted `node_modules` twice in the single session of 2026-08-13**, in two different ways:
+
+1. Conflict copies (`node_modules/next/font/local/index 2.js`) **and `node_modules/@vercel/`
+   deleted outright** — which surfaced as the Turbopack font error above and sent the session
+   chasing the wrong cause entirely.
+2. An hour later, `node_modules/glob/` silently lost `common.js` while everything else stayed —
+   a package present, importable, and missing an internal file. The build died with
+   `Can't resolve './common.js'` from inside a dependency nobody had touched.
+
+The npm cache at `~/.npm/_cacache` is damaged too (`EACCES` / "File exists"), so a reinstall needs
+its own cache directory:
+
+```bash
+rm -rf node_modules && npm ci --cache /tmp/npm-cache
+```
+
+**Move the project out of `~/Desktop` and `~/Documents`.** This is no longer a nuisance. It breaks
+builds in ways that look exactly like code bugs, in dependencies nobody edited, at random. Both
+incidents cost real time. When anything fails inexplicably — especially "cannot resolve" inside
+`node_modules` — suspect this **first**:
 
 ```bash
 find node_modules -maxdepth 4 -name "* 2*" | head
 ```
+
+That finds conflict copies but **not** the missing-file case, which has no cheap check. If the
+error names a file inside `node_modules`, just reinstall before debugging anything.
+
+None of this affects Vercel, which installs fresh from `package-lock.json` every build. A local
+build failure that Vercel does not share is almost certainly this.
 
 ---
 
@@ -544,11 +614,12 @@ find node_modules -maxdepth 4 -name "* 2*" | head
 - [x] ~~Private GitHub repo~~ — created.
 - [x] ~~Login email addresses for the other four~~ — captured in the roster above.
 - [ ] Confirm Victor Melo's address. Ryan wrote `vmelo@beales..com`, which is a typo; assumed `vmelo@bealesllc.com`.
-- [ ] **Deploy to Vercel** — the repo is pushed and the build is verified cold. Steps 2–5 in
-      `README.md` need Ryan's Vercel and Supabase accounts. The Supabase redirect-URL step is the
-      one that is easy to skip and breaks every magic link if you do.
+- [ ] Nobody knows their password except Ryan. The other four have never signed in. Passwords are
+      hashed and unrecoverable, so onboarding them means either the magic link or
+      `npm run user:create … --password`. Worth deciding before inviting them.
 - [ ] Bob Mulligan's legal first name, for the Phase 7 payroll parser — Paychex will say "Robert" or similar where the team says "Bob", and there is already another Robert Mulligan to tell him apart from.
-- [ ] Vercel project — not set up yet.
+- [x] ~~Vercel project~~ — live at `https://beales-crm.vercel.app`, 2026-08-13. Ryan signed in and
+      reached the dashboard.
 
 **Blocking Phase 1b (the import):**
 - [ ] Exact column headers of `2-Active Clients` and `3-Contact Directory`, or a CSV export of both.
