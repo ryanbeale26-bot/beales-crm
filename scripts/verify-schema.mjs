@@ -280,6 +280,160 @@ async function main() {
   check('closing a contract stamps the end date', afterLoss.rows[0]?.end_date !== null)
   check('closing a contract records the reason as lost', afterLoss.rows[0]?.change_reason === 'lost')
 
+  // Churn and contraction were never asserted before this phase, so the two
+  // columns the revenue report is built on had no test behind them at all.
+  //
+  // Note the contract above was closed *today*: the MRR series stops at this
+  // month and the building is still billing it, so that close cannot show as
+  // churn until next month. Churn needs a contract that ended in the past.
+  const CHURNED = '55555555-5555-5555-5555-555555555555'
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into buildings (id, account_id, name, health_score)
+      values ('${CHURNED}', '33333333-3333-3333-3333-333333333333', '2 Gone Street', 'at_risk');
+    select set_building_monthly_value('${CHURNED}', 4000, (current_date - interval '8 months')::date, 'initial');
+    select close_building_contract('${CHURNED}', (current_date - interval '3 months')::date);
+  `)
+  const churned = await db.query(
+    `select month, churn, ending_mrr from v_mrr_waterfall where churn > 0 order by month`,
+  )
+  check(
+    'a contract that ended shows as churn',
+    Number(churned.rows[0]?.churn) === 4000,
+    JSON.stringify(churned.rows[0]),
+  )
+  const stillBilling = await db.query(
+    `select count(*)::int as n from v_building_mrr_by_month
+     where building_id = '${CHURNED}' and month > (current_date - interval '3 months')::date`,
+  )
+  check('a churned building stops billing', stillBilling.rows[0].n === 0)
+
+  const SHRANK = '66666666-6666-6666-6666-666666666666'
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into buildings (id, account_id, name, health_score)
+      values ('${SHRANK}', '33333333-3333-3333-3333-333333333333', '3 Smaller Court', 'needs_attention');
+    select set_building_monthly_value('${SHRANK}', 3000, (current_date - interval '6 months')::date, 'initial');
+    select set_building_monthly_value('${SHRANK}', 2000, (current_date - interval '2 months')::date);
+  `)
+  const shrank = await db.query(
+    `select month, contraction from v_mrr_waterfall where contraction > 0 order by month`,
+  )
+  check('a price cut shows as contraction', Number(shrank.rows[0]?.contraction) === 1000)
+
+  // A correction is not a price change. Putting a corrected figure through
+  // set_building_monthly_value() would record a movement that never happened,
+  // so it has its own function that amends in place and writes no history.
+  const movementMonths = () =>
+    db
+      .query(
+        `select month from v_mrr_waterfall
+         where expansion > 0 or contraction > 0 or churn > 0 order by month`,
+      )
+      .then((r) => r.rows.map((x) => String(x.month)).join(','))
+  const movementsBefore = await movementMonths()
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    select correct_open_contract_value('${SHRANK}', 2500, 'Typo — was never 2000.');
+  `)
+  const corrected = await db.query(
+    `select count(*)::int as n,
+            max(monthly_value) filter (where end_date is null) as open_value,
+            max(annual_value)  filter (where end_date is null) as open_annual
+     from building_contract_periods where building_id = '${SHRANK}'`,
+  )
+  check('a correction writes no new history', corrected.rows[0].n === 2, `${corrected.rows[0].n} periods`)
+  check('a correction changes the open value', Number(corrected.rows[0].open_value) === 2500)
+  check('a correction recomputes the annual value', Number(corrected.rows[0].open_annual) === 30000)
+  // The amounts do move — correcting 2000 to 2500 means the earlier drop from
+  // 3000 was always 500, not 1000. That is the point. What must not happen is a
+  // *new* month appearing in the waterfall, which is what an appended period
+  // would have caused.
+  check(
+    'a correction invents no new movement month',
+    (await movementMonths()) === movementsBefore,
+    `${movementsBefore} → ${await movementMonths()}`,
+  )
+  const correctedContraction = await db.query(
+    `select contraction from v_mrr_waterfall where contraction > 0 order by month`,
+  )
+  check(
+    'a correction restates the movement it belongs to',
+    Number(correctedContraction.rows[0]?.contraction) === 500,
+    JSON.stringify(correctedContraction.rows[0]),
+  )
+  const missingPeriod = await db
+    .exec(`select correct_open_contract_value('${CHURNED}', 100);`)
+    .then(() => false)
+    .catch(() => true)
+  check('correcting a building with no open contract fails loudly', missingPeriod)
+
+  // ---------------------------------------------------------------------------
+  console.log('\nReporting views')
+
+  const byMonth = await db.query(`select month, mrr, building_count, account_count
+                                  from v_mrr_by_month order by month desc limit 1`)
+  const monthTotal = await db.query(`select coalesce(sum(monthly_value), 0) as total
+                                     from v_building_mrr_by_month
+                                     where month = date_trunc('month', now())::date`)
+  check(
+    'the company MRR row matches the buildings behind it',
+    Number(byMonth.rows[0]?.mrr) === Number(monthTotal.rows[0]?.total),
+    `${byMonth.rows[0]?.mrr} vs ${monthTotal.rows[0]?.total}`,
+  )
+
+  // The point of the coverage view: it must count the buildings that are
+  // missing from the MRR views, which is why it reads buildings directly.
+  await db.exec(`
+    insert into buildings (id, account_id, name)
+      values ('77777777-7777-7777-7777-777777777777',
+              '33333333-3333-3333-3333-333333333333', '4 Unpriced Way');
+  `)
+  const coverage = await db.query(`select * from v_mrr_coverage`)
+  const cov = coverage.rows[0]
+  check(
+    'coverage counts buildings that have no contract at all',
+    Number(cov.buildings_total) > Number(cov.buildings_with_value),
+    JSON.stringify(cov),
+  )
+  check('coverage excludes nothing that is billing', Number(cov.buildings_with_value) >= 1)
+
+  const health = await db.query(`select * from v_building_health_mrr order by health_score`)
+  check('health groups the portfolio', health.rows.length >= 2, JSON.stringify(health.rows))
+  check(
+    'health keeps a row for buildings nobody has scored',
+    health.rows.some((r) => r.health_score === null),
+    JSON.stringify(health.rows.map((r) => r.health_score)),
+  )
+
+  const expansion = await db.query(
+    `select account_id, mrr_now, mrr_12m, change_12m, building_count
+     from v_account_mrr_change where account_id = '33333333-3333-3333-3333-333333333333'`,
+  )
+  check('account change reports one row per account', expansion.rows.length === 1)
+  check(
+    'account change is now minus then',
+    Number(expansion.rows[0]?.change_12m) ===
+      Number(expansion.rows[0]?.mrr_now) - Number(expansion.rows[0]?.mrr_12m),
+    JSON.stringify(expansion.rows[0]),
+  )
+
+  // The check that would have caught the grant gap: every view created by a
+  // later migration was invisible to `authenticated` until this phase.
+  const ungranted = await db.query(`
+    select c.relname
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relkind = 'v'
+      and not has_table_privilege('authenticated', c.oid, 'select')
+  `)
+  check(
+    'every view is readable by a signed-in user',
+    ungranted.rows.length === 0,
+    ungranted.rows.map((r) => r.relname).join(', '),
+  )
+
   // ---------------------------------------------------------------------------
   console.log('\nContracted hours')
 
@@ -507,6 +661,54 @@ async function main() {
   check(
     'only the latest stage is the current one',
     durations.rows.filter((r) => r.is_current).length === 1,
+  )
+
+  // Win rate used to be a line of TypeScript in the report. Now it is a view,
+  // and the dashboard reads the same one — so this asserts the view agrees with
+  // counting the outcomes by hand, which is what the old code did.
+  const rate = await db.query('select * from v_opportunity_win_rate')
+  const byHand = await db.query(
+    `select count(*) filter (where won)::int as won,
+            count(*)::int as closed,
+            count(*) filter (where actual_close_date is null)::int as undated
+     from v_opportunity_outcomes`,
+  )
+  check(
+    'the win rate view agrees with the outcomes behind it',
+    Number(rate.rows[0]?.won) === byHand.rows[0].won &&
+      Number(rate.rows[0]?.closed) === byHand.rows[0].closed,
+    JSON.stringify(rate.rows[0]),
+  )
+  check(
+    'the win rate is a percentage of closed deals',
+    Number(rate.rows[0]?.win_rate) ===
+      Math.round((byHand.rows[0].won / byHand.rows[0].closed) * 1000) / 10,
+    `${rate.rows[0]?.win_rate}%`,
+  )
+  check(
+    'the win rate counts the deals with no close date behind it',
+    Number(rate.rows[0]?.closed_without_date) === byHand.rows[0].undated,
+  )
+
+  // Two open deals, one priced and one not — the real pipeline's defining
+  // shape, and the reason the coverage view exists.
+  await db.exec(`
+    insert into opportunities (name, stage_id, monthly_value)
+    select 'Priced and open', id, 1000 from pipeline_stages where name = 'RFP Sent';
+    insert into opportunities (name, stage_id)
+    select 'Open with no price', id from pipeline_stages where name = 'Targeting';
+  `)
+  const pipeCoverage = await db.query('select * from v_pipeline_coverage')
+  const pc = pipeCoverage.rows[0]
+  check(
+    'pipeline coverage counts only open deals',
+    Number(pc.open_deals) > 0 && Number(pc.open_deals) >= Number(pc.open_deals_priced),
+    JSON.stringify(pc),
+  )
+  check(
+    'pipeline coverage separates priced deals from unpriced',
+    Number(pc.open_deals) > Number(pc.open_deals_priced),
+    `${pc.open_deals_priced} of ${pc.open_deals} priced`,
   )
 
   // ---------------------------------------------------------------------------

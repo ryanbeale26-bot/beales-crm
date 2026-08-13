@@ -17,11 +17,16 @@ insert into accounts (id, name, account_type, status, notes) values
   ('aaaaaaaa-0000-4000-8000-000000000003', 'Sample Labs Inc',       'Life science',        'prospect', 'Sample record — not a real customer.')
 on conflict (id) do nothing;
 
-insert into buildings (id, account_id, name, city, state, entity, square_footage, status, contract_start_date) values
-  ('bbbbbbbb-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000001', '1 Example Plaza',    'Boston',    'MA', 'beales', 120000, 'active',  current_date - interval '18 months'),
-  ('bbbbbbbb-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', '2 Example Plaza',    'Boston',    'MA', 'beales',  85000, 'active',  current_date - interval '12 months'),
-  ('bbbbbbbb-0000-4000-8000-000000000003', 'aaaaaaaa-0000-4000-8000-000000000002', 'Sample Medical Park','Quincy',    'MA', 'afs',    210000, 'active',  current_date - interval '9 months'),
-  ('bbbbbbbb-0000-4000-8000-000000000004', 'aaaaaaaa-0000-4000-8000-000000000003', 'Placeholder Labs',   'Cambridge', 'MA', 'beales',  60000, 'pending', null)
+-- health_score and property_type matter here: the dashboard summarises the
+-- portfolio by health and the reports group revenue by segment, and neither
+-- path can be exercised locally against buildings that carry neither. The
+-- fourth building is deliberately left unscored — an unscored building is a
+-- real state, and it is the one the dashboard's "Not set" row exists for.
+insert into buildings (id, account_id, name, city, state, entity, square_footage, status, health_score, property_type_id, contract_start_date) values
+  ('bbbbbbbb-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000001', '1 Example Plaza',    'Boston',    'MA', 'beales', 120000, 'active',  'healthy',         (select id from property_types where name = 'Office'     limit 1), current_date - interval '18 months'),
+  ('bbbbbbbb-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', '2 Example Plaza',    'Boston',    'MA', 'beales',  85000, 'active',  'needs_attention', (select id from property_types where name = 'Office'     limit 1), current_date - interval '12 months'),
+  ('bbbbbbbb-0000-4000-8000-000000000003', 'aaaaaaaa-0000-4000-8000-000000000002', 'Sample Medical Park','Quincy',    'MA', 'afs',    210000, 'active',  'at_risk',         (select id from property_types where name = 'Healthcare' limit 1), current_date - interval '9 months'),
+  ('bbbbbbbb-0000-4000-8000-000000000004', 'aaaaaaaa-0000-4000-8000-000000000003', 'Placeholder Labs',   'Cambridge', 'MA', 'beales',  60000, 'pending', null,              (select id from property_types where name = 'Industrial' limit 1), null)
 on conflict (id) do nothing;
 
 -- Contract values, written through the helper so history behaves like the real thing.

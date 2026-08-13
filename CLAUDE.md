@@ -172,15 +172,16 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 2** — Quick-add logging, timelines, activity feed with filters, activity importer. Tab 4 **not yet imported for real**
 - [x] **Phase 3** — Opportunities board, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report, admin reference-data editor. Importers for tabs 1 and 5 built and rehearsed; **the real imports are Ryan's to run**
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects. **Partly built already:** the `employees` / `employee_assignments` schema, the `/employees` list and form, and assigning someone to a building all shipped alongside Phase 1a. What is missing is an employee detail page, the staff-movement report on top of `v_staff_movement`, and projects entirely — `projects` and `project_employees` have a schema, 10 seeded `project_types`, and no screens at all. **Blocked on where employee data comes from:** the workbook has no employee tab and all three tables are empty
-- [ ] **Phase 5** — Revenue views in Postgres, dashboard (mirror tab 0 first), six reports with CSV export
+- [x] **Phase 5** — Revenue views in Postgres, dashboard mirroring tab 0, six reports with CSV export, and a correction path that fixes a wrong contract figure without inventing a price change
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
 - [ ] **Phase 7+** — Integrations, one per phase, in the order above
 
 ## Current status
 
-**Phase:** 3 shipped. **All five spreadsheet tabs are now imported for real** — 22 accounts,
-38 buildings, 97 contacts, 667 activities, 55 opportunities. The migration is done; the Google
-Sheet is no longer the source of truth for anything the CRM holds.
+**Phase:** 5 shipped. The dashboard, six reports and the revenue views are live against real
+data. **All five spreadsheet tabs are imported** — 22 accounts, 38 buildings, 97 contacts,
+667 activities, 55 opportunities. The Google Sheet is no longer the source of truth for
+anything the CRM holds.
 **Last session:** 2026-08-13
 
 Live counts: 5 committed import batches, 8 win reasons (Ryan kept every phrase the Won/Loss
@@ -188,10 +189,39 @@ preview offered), 1 competitor (Janitronics). **`employees`, `employee_assignmen
 are all still empty** — nothing in the workbook feeds them, which is the first thing Phase 4 has
 to solve.
 
-**A data gap worth raising before the dashboard is built:** 35 of the 55 deals carry no monthly
-value, because only 16 of the 51 Pipeline rows had a figure. Every pipeline total is understated
-until Ryan fills them in, and the screens say so out loud rather than quietly reporting a smaller
-number.
+### The numbers the app currently reports, and what each one is missing
+
+Measured 2026-08-13. Read this before believing any total on a screen.
+
+| Number | Value | The gap |
+|---|---|---|
+| MRR | **$47,148** | Only **11 of 38** buildings have a contract period. 27 bill $0 forever |
+| Accounts billing | 6 of 22 | The other 16 have no figure on any building |
+| Open pipeline | $163,356 across 30 deals | Only **2 of 30** open deals carry a price |
+| Win rate | **80%** (20 won, 5 lost) | 13 of the 25 closed deals have no close date |
+| Activities | 667 logged | Only **293** are attached to an account; 374 float free |
+| Health | 26 healthy / 8 needs attention / 2 at risk / **2 not scored** | Only 11 of the 38 carry revenue |
+
+Every one of these gaps is printed on the screen next to the number it affects. That is
+deliberate and load-bearing — see the Decision Log.
+
+**The win rate is 80%, not the 92.3% recorded earlier in this file.** That figure came from tab 5
+alone; tab 1 carried its own Closed Won and Closed Lost rows, so the CRM's denominator is 25
+closed deals, not 13. Both numbers are right about their own scope. The CRM's is the one to quote.
+
+**`property_type_id` is null on all 38 buildings** — segments never came across in the Active
+Clients import. Revenue-by-segment is therefore unbuildable and was deliberately left out of the
+six reports. Opportunities *do* carry it (21 of 25 closed deals), so the pipeline report's
+sales-cycle-by-segment section works. Fixing this needs a re-import or a bulk edit.
+
+**`entity` is `beales` on all 38 buildings.** The views all split by entity correctly, but no
+screen offers an entity filter yet because it would be a one-row report. The day AFS gets its
+first building, `/reports/revenue` already sums across entities rather than assuming one.
+
+**A correction was made to real data this phase:** `91 Longwater Drive` was stored at
+$30,000/month, which Ryan confirmed should be **$30,000/year = $2,500/month**. It was 40% of the
+company's reported MRR. Fixed through the new correction path (see below), audited, and the
+contract period count is unchanged at 11.
 
 **Correction to earlier notes:** tab 4 *has* been imported (667 activities, batch committed
 2026-08-12), and there is a **sixth profile — Brendan Mulligan** (`Brendan.Mulligan@bealesllc.com`,
@@ -323,6 +353,48 @@ Rehearsed against the real workbook: 51 deals at $89,062/mo, 9 matched to an acc
 rows, zero errors; then tab 5 updated 9 and created 4, skipping the summary row. Both rolled back,
 and the database was verified row-for-row identical to how it started.
 
+**What Phase 5 shipped.** `/dashboard` mirrors tab 0 — six tiles, pipeline by stage, client
+health. `/reports` is an index over six reports: pipeline (extended), revenue, account expansion,
+losses, client health, activity coverage. Every report exports to CSV.
+
+Two migrations: `20260814090000_reporting_views.sql` and `20260814090100_clear_imported_close_dates.sql`.
+
+| Thing | Why it is the way it is |
+|---|---|
+| Six new views: `v_mrr_by_month`, `v_mrr_coverage`, `v_account_mrr_change`, `v_building_health_mrr`, `v_opportunity_win_rate`, `v_pipeline_coverage` | Three gaps made a dashboard impossible without them. `health_score` appeared in **no** view, though tab 0 summarises the portfolio by it. There was no company-wide MRR-per-month row — `v_mrr_waterfall` splits by `entity`, so every caller had to remember to `sum()`. And win rate lived only as a line of TypeScript in the pipeline report, which the dashboard would have had to duplicate |
+| `v_mrr_coverage` counts buildings from `buildings`, **not** from the MRR views | `v_building_mrr_by_month` inner-joins its contract periods, so a building with no contract vanishes from it silently — and that building is exactly what the view exists to count. Reading the denominator from the numerator's source would always report 100% coverage |
+| `v_building_current_value` was widened, not replaced | Added `name`, `health_score`, `property_type_id`, `owner_id`, `square_footage`, `contract_end_date`. Purely additive; both existing callers select named columns |
+| `correct_open_contract_value()` exists beside `set_building_monthly_value()` | A price change and a typo look identical in a form field and mean opposite things in the revenue report. Correcting $30,000 to $2,500 through `set_building_monthly_value()` would have recorded a **$27,500 contraction that never happened**, with no screen anywhere to take it back. This amends the open period in place and writes no history. The building form has a "this is a correction" checkbox that routes to it |
+| 13 close dates were **nulled**, not filtered | `stamp_opportunity_close_date()` stamps `current_date` on entering a won/lost stage — right for a drag, wrong for an import of 25 already-closed deals. Tab 1 carried no close date for its Closed Won rows, so all 13 read 2026-08-13. Fixed in the data rather than in six report queries, because the date was equally wrong on each deal's own detail page. Matched on the batch's own creation date, never a date literal, so it is reproducible and a no-op on a fresh database |
+| Every understated total says so, in the tile | Most of the portfolio has no contract figure and 28 of 30 open deals have no price. This team has never used a CRM; a number they later discover was wrong costs more trust than a number that admitted its own gap up front. `Coverage` in `report.tsx` is the shared version of that note |
+| Still no Recharts | Reaffirmed. The one genuine time series — 27 months of MRR — is `MonthBars`, flex columns with percentage heights. A charting library would have been ~100kb and then needed overriding to match the hairline design |
+| `Bar` and `Stat` moved to `src/components/report.tsx` | They were local to the pipeline report and are now used by six pages plus the dashboard. Lifted verbatim, including the comment explaining why they are divs |
+| The grant gap was closed | `20260812180000` ends with `grant select … on all tables`, which is a **snapshot, not a rule**. Six objects created by later migrations — `v_building_hours`, `v_building_scheduled_hours`, `v_pipeline_funnel`, `v_opportunity_stage_durations`, `win_reasons`, and `v_opportunity_outcomes` (dropped and recreated in `20260813140000`) — were never granted to `authenticated`. Hosted Supabase masks this with its own default privileges so nothing was broken, but a schema rebuilt anywhere else would have failed on exactly the views the reports read. Now re-granted, plus `alter default privileges` so it stops recurring, plus an assertion in `db:verify` that would have caught it |
+
+Where things live:
+
+| File | Job |
+|---|---|
+| `src/components/report.tsx` | `Bar`, `Stat`, `BarRow`, `MonthBars`, `Coverage`, `Delta`, `rank()`, `ExportLink` |
+| `src/lib/reports/<name>.ts` | One `fetchX(supabase)` per report, plus its CSV `Column[]`. **The page and its export route both call it** — that is the only reliable way to stop a CSV disagreeing with the screen it came from |
+| `src/lib/csv.ts` | `toCsv()` with RFC-4180 quoting, `csvResponse()`, `csvFilename()`. Numbers stay raw so Excel can sum a column; a UTF-8 BOM so em-dashes survive |
+| `src/app/(app)/reports/<name>/export/route.ts` | Nine lines each: fetch, `toCsv`, `csvResponse` |
+
+The nav entry for Reports is now `/reports`, not `/reports/pipeline` — active-state matching is
+prefix-based, so every report except pipeline would otherwise have left the sidebar item unlit.
+`FULL_WIDTH` is untouched: every report is a narrow document.
+
+`db:verify` grew from 71 to 93 checks. The revenue block previously asserted new business and
+expansion but **never asserted contraction or churn at all** — the two columns the revenue report
+is built on had no test behind them. It now covers a churn sequence, a contraction, that a
+correction writes no new history and invents no new movement month, that the win-rate view agrees
+with counting the outcomes by hand, and that `authenticated` can select every view.
+
+One behaviour worth knowing: **closing a contract today does not show as churn until next month.**
+The MRR series runs to `date_trunc('month', now())` and a building whose `end_date` is today still
+bills the current month, so the churn lands in the month after. The verify script tests churn with
+a contract that ended three months ago for exactly this reason.
+
 ### How to work in this repo
 
 | Command | What it does |
@@ -433,6 +505,18 @@ in a car park.
 - [ ] Does a building ever move between Beale's LLC and AFS? If so, `entity` needs dating the way contract value is.
 - [ ] Can one building ever be billed to two accounts? Assumed no.
 
+**Opened by Phase 5:**
+- [ ] **`property_type_id` is null on all 38 buildings** — segments never came across in the Active
+      Clients import, so revenue-by-segment cannot be built. Needs a re-import of that column or a
+      bulk edit. The pipeline side is fine; opportunities carry it.
+- [ ] **374 of the 667 activities are attached to nothing** — no account, building, deal or
+      contact. They came from the Activity Log import and count towards nobody on
+      `/reports/activity`, which says so. Worth deciding whether to re-import with a link column.
+- [ ] **27 of 38 buildings have no contract figure.** Every revenue number is understated until
+      these are filled in. The screens say so, but the fix is data entry, not code.
+- [ ] Only 2 of 30 open deals carry a price, so the weighted pipeline is near-meaningless. Same
+      shape of problem as above.
+
 **Review when convenient:**
 - [x] ~~`lead_sources` placeholders~~ — replaced 2026-08-13 with the eight real sources from the Source column. The five placeholders are **deactivated, not deleted**, because `lead_source_id` has no ON DELETE.
 - [ ] `loss_reasons` are still mostly placeholders — `Lost to competitor` was added (the only loss with evidence) and `Other` pushed last, but the middle of the list is invented. Ryan can now fix it himself in `/admin/reference`.
@@ -441,7 +525,10 @@ in a car park.
 
 **Later phases:**
 - [x] ~~Deal stage names and probabilities~~ — all eight confirmed by Ryan 2026-08-13. `Hot Lead` 10% and `RFP Response` 50%, previously interpolated guesses, are the values he wants. They are editable in `/admin/reference`, so a change is data, not a migration.
-- [ ] `0-Dashboard` formulas or screenshot — needed before designing the Phase 5 dashboard.
+- [x] ~~`0-Dashboard` formulas or screenshot~~ — the dashboard was built 2026-08-13 to the structure
+      already recorded in this file (six tiles, pipeline-by-stage, health summary), which Ryan
+      confirmed. **The screenshot is still worth having** to check the exact tile definitions
+      before the other four people see it, but it is no longer blocking.
 - [ ] Sender email addresses for the weekly payroll emails, plus 3–4 real samples before the parser is written — Phase 7.
 - [ ] InspectQA read-only credentials for `beales-inspections` (`illxdfvqvuwoqwbplgiy`) — Ryan provides at Phase 7. The project is identified; the credentials are not yet issued.
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
@@ -476,6 +563,14 @@ in a car park.
 | 2026-08-13 | Charts are CSS bars; no Recharts | Every chart in the pipeline report is a ranked horizontal bar. A ~100kb dependency that then needs overriding to match the hairline design earns nothing. Revisit only if Phase 5 needs a real time series |
 | 2026-08-13 | `@dnd-kit/core` for the board, with a `md` breakpoint that drops it entirely | It is the only option that works with mouse, touch **and** keyboard. But eight columns on a phone is a horizontal scroll with one card visible, so below `md` the same deals render as a grouped list with a stage dropdown — which is faster than dragging anyway |
 | 2026-08-13 | `DndContext` carries a fixed `id` | dnd-kit numbers its generated `aria-describedby` from a counter that restarts on the client, so it never matched the server and React reported a hydration failure on every load of the board |
+| 2026-08-13 | **Every understated total states its own coverage, on the tile, in the same block as the number** | Most of the portfolio has no contract figure and 28 of 30 open deals have no price, so nearly every total in this app is smaller than the truth. The adoption bar governs: this team has never used a CRM, and a number they later discover was wrong costs far more trust than a number that admitted its gap the first time they read it. "A number nobody trusts is worse than no number" is the rule this implements |
+| 2026-08-13 | **`correct_open_contract_value()` sits beside `set_building_monthly_value()`**, with a checkbox on the building form to choose | A price change and a typo are indistinguishable in a form field and opposite in the revenue report. Correcting the $30,000 figure on 91 Longwater Drive through the normal path would have recorded a $27,500 contraction that never happened, permanently, with no screen to undo it. The correction amends the open period in place and writes no history at all. It restates the movement it belongs to — correcting 2000 to 2500 means an earlier drop from 3000 was always 500, never 1000 — which is the point, not a side effect |
+| 2026-08-13 | **The 13 import-stamped close dates were nulled in the data, not filtered in the reports** | `stamp_opportunity_close_date()` correctly stamps `current_date` when someone drags a card, and wrongly stamped it on 13 already-closed deals that tab 1 carried no date for. Filtering in six report queries would have left the same wrong date on each deal's own detail page. Once null, `closed_month` and `days_to_close` are null too and every report excludes them for free, while `v_opportunity_win_rate.closed_without_date` keeps the gap visible. Matched on the batch's own creation date, never a literal |
+| 2026-08-13 | Win rate is a **view**, not a line of TypeScript | It was computed in the pipeline report; the dashboard needed the same number. Two implementations of one number eventually disagree, and the one place that must never happen is the figure the owners quote to each other |
+| 2026-08-13 | `v_mrr_coverage` counts its denominator from `buildings`, not from the MRR views | `v_building_mrr_by_month` inner-joins contract periods, so a building with no contract silently disappears — and that is exactly the building being counted. Reading both halves from the same source would have reported 100% coverage, always, and looked correct |
+| 2026-08-13 | Revenue growth leads with **MRR over time**, and the waterfall's four columns sit in a table beneath it that says when three of them are structurally zero | All 11 contract periods are open and none has ever been superseded, so expansion, contraction and churn are $0 in all 27 months. Three empty columns read as a broken report; a sentence saying "every change so far is new business" reads as an honest one |
+| 2026-08-13 | Still no Recharts, now that there is a real time series | 27 months of MRR is `MonthBars` — flex columns with percentage heights, ~30 lines. A ~100kb dependency that then needs overriding to match the hairline design still earns nothing. Revisit only if a report needs two series on one axis |
+| 2026-08-13 | `grant … on all tables` was re-run and backed by `alter default privileges` | The original grant was a snapshot taken mid-migration, so six objects created afterwards — including `v_opportunity_outcomes`, which a later migration drops and recreates — were never visible to `authenticated`. Hosted Supabase's own defaults hid the bug entirely. `db:verify` now asserts every view is selectable, which is the check that would have caught it |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

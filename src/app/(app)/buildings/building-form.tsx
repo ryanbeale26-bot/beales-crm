@@ -178,6 +178,26 @@ export function BuildingForm({
             <Input id="value_effective_date" name="value_effective_date" type="date" />
           </Field>
 
+          {/*
+            A price change and a typo look identical in a form field but mean
+            opposite things in the revenue report. Without this, fixing a wrong
+            figure records a contraction that never happened.
+          */}
+          {currentMonthlyValue !== null && currentMonthlyValue !== undefined && (
+            <label className="text-muted-foreground flex items-start gap-2 text-sm sm:col-span-2">
+              <input
+                type="checkbox"
+                name="value_is_correction"
+                className="mt-0.5 size-4 shrink-0"
+              />
+              <span>
+                This is a <strong className="text-foreground font-medium">correction</strong> — the
+                old figure was wrong, not a real price change. Fixes it in place and leaves no
+                increase or decrease in the revenue report.
+              </span>
+            </label>
+          )}
+
           <Field label="Contract start" htmlFor="contract_start_date">
             <Input
               id="contract_start_date"

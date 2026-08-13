@@ -196,6 +196,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "activities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "activities_activity_type_id_fkey"
             columns: ["activity_type_id"]
             isOneToOne: false
@@ -371,6 +378,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "attachments_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -735,6 +749,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "buildings_import_batch_id_fkey"
             columns: ["import_batch_id"]
             isOneToOne: false
@@ -947,6 +968,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "contacts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -1591,6 +1619,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -2315,14 +2350,35 @@ export type Database = {
         }
         Relationships: []
       }
+      v_account_mrr_change: {
+        Row: {
+          account_id: string | null
+          account_name: string | null
+          building_count: number | null
+          change_12m: number | null
+          change_3m: number | null
+          change_6m: number | null
+          mrr_12m: number | null
+          mrr_3m: number | null
+          mrr_6m: number | null
+          mrr_now: number | null
+        }
+        Relationships: []
+      }
       v_building_current_value: {
         Row: {
           account_id: string | null
           annual_value: number | null
           building_id: string | null
+          contract_end_date: string | null
           effective_date: string | null
           entity: Database["public"]["Enums"]["operating_entity"] | null
+          health_score: Database["public"]["Enums"]["health_score"] | null
           monthly_value: number | null
+          name: string | null
+          owner_id: string | null
+          property_type_id: string | null
+          square_footage: number | null
           status: Database["public"]["Enums"]["building_status"] | null
         }
         Relationships: [
@@ -2340,7 +2396,45 @@ export type Database = {
             referencedRelation: "v_account_mrr_by_month"
             referencedColumns: ["account_id"]
           },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "buildings_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_property_type_id_fkey"
+            columns: ["property_type_id"]
+            isOneToOne: false
+            referencedRelation: "property_types"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_property_type_id_fkey"
+            columns: ["property_type_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["property_type_id"]
+          },
         ]
+      }
+      v_building_health_mrr: {
+        Row: {
+          account_count: number | null
+          building_count: number | null
+          buildings_with_value: number | null
+          health_score: Database["public"]["Enums"]["health_score"] | null
+          mrr: number | null
+        }
+        Relationships: []
       }
       v_building_hours: {
         Row: {
@@ -2379,6 +2473,13 @@ export type Database = {
             referencedRelation: "v_account_mrr_by_month"
             referencedColumns: ["account_id"]
           },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
         ]
       }
       v_building_labor_margin: {
@@ -2403,6 +2504,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -2457,6 +2565,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -2515,6 +2630,25 @@ export type Database = {
           },
         ]
       }
+      v_mrr_by_month: {
+        Row: {
+          account_count: number | null
+          building_count: number | null
+          month: string | null
+          mrr: number | null
+        }
+        Relationships: []
+      }
+      v_mrr_coverage: {
+        Row: {
+          accounts_total: number | null
+          accounts_with_value: number | null
+          buildings_total: number | null
+          buildings_with_value: number | null
+          mrr: number | null
+        }
+        Relationships: []
+      }
       v_mrr_waterfall: {
         Row: {
           churn: number | null
@@ -2569,6 +2703,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
           {
@@ -2664,6 +2805,29 @@ export type Database = {
             referencedColumns: ["stage_id"]
           },
         ]
+      }
+      v_opportunity_win_rate: {
+        Row: {
+          closed: number | null
+          closed_without_date: number | null
+          closed_without_value: number | null
+          lost: number | null
+          lost_annual: number | null
+          win_rate: number | null
+          won: number | null
+          won_annual: number | null
+        }
+        Relationships: []
+      }
+      v_pipeline_coverage: {
+        Row: {
+          open_annual: number | null
+          open_deals: number | null
+          open_deals_priced: number | null
+          open_monthly: number | null
+          weighted_annual: number | null
+        }
+        Relationships: []
       }
       v_pipeline_funnel: {
         Row: {
@@ -2785,6 +2949,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "opportunities_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
@@ -2808,6 +2979,14 @@ export type Database = {
           p_effective_date?: string
           p_monthly_value?: number
           p_opportunity_id: string
+        }
+        Returns: string
+      }
+      correct_open_contract_value: {
+        Args: {
+          p_building_id: string
+          p_monthly_value: number
+          p_notes?: string
         }
         Returns: string
       }

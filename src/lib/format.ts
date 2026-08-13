@@ -28,6 +28,30 @@ export function squareFeet(value: number | null | undefined): string {
   return `${value.toLocaleString('en-US')} SF`
 }
 
+/** 80% — no decimal unless the number needs one to be honest. */
+export function percent(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = typeof value === 'string' ? Number(value) : value
+  if (Number.isNaN(n)) return '—'
+  return Number.isInteger(n) ? `${n}%` : `${n.toFixed(1)}%`
+}
+
+/** Aug 2026 — for a month column that has to fit 27 of them across. */
+export function monthLabel(value: string | null | undefined): string {
+  if (!value) return '—'
+  const d = new Date(`${value.slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+}
+
+/** 1,247 — a plain count, grouped. */
+export function count(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = typeof value === 'string' ? Number(value) : value
+  if (Number.isNaN(n)) return '—'
+  return n.toLocaleString('en-US')
+}
+
 export function fullName(
   person: { first_name?: string | null; last_name?: string | null } | null | undefined,
 ): string {

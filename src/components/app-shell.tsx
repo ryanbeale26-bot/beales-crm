@@ -16,7 +16,7 @@ const NAV = [
   { label: 'Contacts', href: '/contacts', icon: '☺' },
   { label: 'Employees', href: '/employees', icon: '⚑' },
   { label: 'Activity', href: '/activity', icon: '≡' },
-  { label: 'Reports', href: '/reports/pipeline', icon: '◱' },
+  { label: 'Reports', href: '/reports', icon: '◱' },
   { label: 'Import', href: '/admin/import', icon: '↥' },
 ]
 

@@ -132,16 +132,27 @@ export async function saveBuilding(
   // Monthly value never gets written straight into a column. This closes the
   // current contract period and opens a new one, so the revenue history that
   // the MRR reports depend on builds itself.
+  //
+  // Unless it was simply the wrong number. A correction amends the open period
+  // in place: putting a corrected figure through set_building_monthly_value()
+  // records an expansion or a contraction in the revenue report that never
+  // happened, and there is no screen anywhere to take it back.
   const monthlyValue = number(formData, 'monthly_value')
+  const isCorrection = formData.get('value_is_correction') === 'on'
   if (monthlyValue !== null && buildingId) {
-    const { error } = await supabase.rpc('set_building_monthly_value', {
-      p_building_id: buildingId,
-      p_monthly_value: monthlyValue,
-      p_effective_date:
-        text(formData, 'value_effective_date') ??
-        values.contract_start_date ??
-        new Date().toISOString().slice(0, 10),
-    })
+    const { error } = isCorrection
+      ? await supabase.rpc('correct_open_contract_value', {
+          p_building_id: buildingId,
+          p_monthly_value: monthlyValue,
+        })
+      : await supabase.rpc('set_building_monthly_value', {
+          p_building_id: buildingId,
+          p_monthly_value: monthlyValue,
+          p_effective_date:
+            text(formData, 'value_effective_date') ??
+            values.contract_start_date ??
+            new Date().toISOString().slice(0, 10),
+        })
     if (error) return { error: `Saved the building, but not its value: ${error.message}` }
   }
 

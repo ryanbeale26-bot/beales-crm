@@ -1,63 +1,24 @@
 import Link from 'next/link'
 
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
-import { money } from '@/lib/format'
+import { Bar, ExportLink, rank, Stat } from '@/components/report'
+import { money, percent } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
-
-/**
- * A horizontal bar. Deliberately a div with a width, not a charting library:
- * every chart on this page is a ranked bar, and a 100kb dependency that then
- * needs overriding to look like the rest of the app earns nothing.
- */
-function Bar({ value, max, tone = 'navy' }: { value: number; max: number; tone?: 'navy' | 'gold' | 'muted' }) {
-  const pct = max > 0 ? Math.max((value / max) * 100, value > 0 ? 1.5 : 0) : 0
-  return (
-    <div className="bg-muted h-1.5 w-full overflow-hidden rounded-[3px]">
-      <div
-        className={
-          tone === 'gold'
-            ? 'bg-brand-gold h-full'
-            : tone === 'muted'
-              ? 'h-full bg-[rgba(27,58,107,0.25)]'
-              : 'bg-primary h-full'
-        }
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  )
-}
-
-function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
-  return (
-    <div className="border-border border-t pt-2">
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="mt-0.5 text-2xl font-semibold">{value}</p>
-      {note && <p className="text-muted-foreground/80 mt-0.5 text-xs">{note}</p>}
-    </div>
-  )
-}
-
-/** Count the rows in a list by a key, biggest first. */
-function rank<T>(rows: T[], key: (row: T) => string | null) {
-  const counts = new Map<string, number>()
-  for (const row of rows) {
-    const k = key(row)
-    if (!k) continue
-    counts.set(k, (counts.get(k) ?? 0) + 1)
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])
-}
 
 export default async function PipelineReportPage() {
   const supabase = await createClient()
 
-  const [{ data: funnel, error: funnelError }, { data: outcomes, error: outcomesError }] =
-    await Promise.all([
-      supabase.from('v_pipeline_funnel').select('*').order('stage_sort_order'),
-      supabase.from('v_opportunity_outcomes').select('*'),
-    ])
+  const [
+    { data: funnel, error: funnelError },
+    { data: outcomes, error: outcomesError },
+    { data: rate, error: rateError },
+  ] = await Promise.all([
+    supabase.from('v_pipeline_funnel').select('*').order('stage_sort_order'),
+    supabase.from('v_opportunity_outcomes').select('*'),
+    supabase.from('v_opportunity_win_rate').select('*').single(),
+  ])
 
-  const error = funnelError ?? outcomesError
+  const error = funnelError ?? outcomesError ?? rateError
   const stages = funnel ?? []
   const closed = outcomes ?? []
 
@@ -70,8 +31,12 @@ export default async function PipelineReportPage() {
 
   const won = closed.filter((o) => o.won)
   const lost = closed.filter((o) => !o.won)
-  const winRate = closed.length > 0 ? (won.length / closed.length) * 100 : null
-  const wonAnnual = won.reduce((n, o) => n + Number(o.annual_value ?? 0), 0)
+
+  // Win rate comes from the view, not from counting these rows. The dashboard
+  // shows the same number, and one definition in SQL is the only way the two
+  // cannot drift apart.
+  const wonAnnual = Number(rate?.won_annual ?? 0)
+  const undated = Number(rate?.closed_without_date ?? 0)
 
   // Sales cycle, by segment. Deals with no opened_on are counted separately
   // rather than averaged in as zero — the spreadsheet never recorded a start
@@ -112,8 +77,9 @@ export default async function PipelineReportPage() {
     <div>
       <PageHeader
         title="Pipeline report"
-        breadcrumbs={[{ label: 'Pipeline', href: '/opportunities' }, { label: 'Report' }]}
+        breadcrumbs={[{ label: 'Reports', href: '/reports' }, { label: 'Pipeline' }]}
         subtitle="Where the work is, where it comes from, and where it goes."
+        action={<ExportLink href="/reports/pipeline/export" />}
       />
 
       {error && (
@@ -133,11 +99,11 @@ export default async function PipelineReportPage() {
         />
         <Stat
           label="Win rate"
-          value={winRate === null ? '—' : `${winRate.toFixed(0)}%`}
+          value={percent(rate?.win_rate)}
           note={
             closed.length === 0
               ? 'No closed deals yet'
-              : `${won.length} won, ${lost.length} lost · ${money(wonAnnual)} won`
+              : `${rate?.won} won, ${rate?.lost} lost · ${money(wonAnnual)} won${undated > 0 ? ` · ${undated} have no close date` : ''}`
           }
         />
       </div>
