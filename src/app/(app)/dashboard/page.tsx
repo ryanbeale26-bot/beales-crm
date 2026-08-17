@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { Bar, HealthDot, Stat } from '@/components/report'
 import { count, date, HEALTH_LABELS, money, percent } from '@/lib/format'
+import { fetchTodaysMeetings } from '@/lib/ingest/next-steps'
 import { fetchMyFocus } from '@/lib/reports/my-focus'
 import { createClient } from '@/lib/supabase/server'
 
@@ -26,13 +27,19 @@ export default async function DashboardPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  const [me, focus] = await Promise.all([
+  const [me, focus, today, review] = await Promise.all([
     user
       ? supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()
       : Promise.resolve({ data: null }),
     user ? fetchMyFocus(supabase, user.id) : Promise.resolve(null),
+    user ? fetchTodaysMeetings(supabase, user.id) : Promise.resolve(null),
+    supabase
+      .from('ingest_suggestions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'open'),
   ])
   const firstName = me.data?.full_name?.split(' ')[0] ?? null
+  const waiting = review.count ?? 0
 
   const [
     { data: coverage, error: coverageError },
@@ -87,6 +94,79 @@ export default async function DashboardPage() {
 
       {error && (
         <p className="text-destructive text-sm">Could not load the dashboard: {error.message}</p>
+      )}
+
+      {/*
+        Today. This is the half of Ryan's old spreadsheet dashboard that rows
+        18–25 promised and never delivered — "Meetings Today" and "Client
+        Matches", which were never two things: the second is how many of the
+        first belong to a client we know.
+
+        It renders only when there is something to say. Four of the five people
+        have never signed in, and a permanently empty strip at the top of the
+        first screen they ever see is worse than no strip.
+      */}
+      {((today && today.meetings.length > 0) || waiting > 0) && (
+        <div className="border-border mb-8 rounded-[3px] border p-3">
+          {today && today.meetings.length > 0 && (
+            <>
+              <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                <h2 className="text-base font-semibold">Today</h2>
+                <span className="text-muted-foreground text-xs">
+                  {today.matched} of {today.meetings.length} with a client we know
+                </span>
+              </div>
+              <div className="border-border border-t">
+                {today.meetings.map((meeting) => (
+                  <div
+                    key={meeting.id}
+                    className="border-border flex items-center justify-between gap-3 border-b px-1 py-1.5 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <span className="truncate text-sm font-medium">{meeting.title}</span>
+                      {(meeting.accountName ?? meeting.contactName) && (
+                        <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                          {meeting.accountId ? (
+                            <Link href={`/accounts/${meeting.accountId}`} className="underline">
+                              {meeting.accountName}
+                            </Link>
+                          ) : (
+                            meeting.contactName
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {meeting.allDay || !meeting.dueAt
+                        ? 'all day'
+                        : new Date(meeting.dueAt).toLocaleTimeString([], {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {waiting > 0 && (
+            <p
+              className={
+                today && today.meetings.length > 0
+                  ? 'text-muted-foreground mt-2.5 text-sm'
+                  : 'text-muted-foreground text-sm'
+              }
+            >
+              The nightly job left {waiting} {waiting === 1 ? 'thing' : 'things'} it would not act
+              on by itself.{' '}
+              <Link href="/review" className="underline">
+                Have a look
+              </Link>{' '}
+              — or don&apos;t; they expire on their own.
+            </p>
+          )}
+        </div>
       )}
 
       {/*

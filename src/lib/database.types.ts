@@ -39,6 +39,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_domains: {
+        Row: {
+          account_id: string
+          added_by: string | null
+          created_at: string
+          domain: string
+          id: string
+        }
+        Insert: {
+          account_id: string
+          added_by?: string | null
+          created_at?: string
+          domain: string
+          id?: string
+        }
+        Update: {
+          account_id?: string
+          added_by?: string | null
+          created_at?: string
+          domain?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_domains_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "account_domains_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "account_domains_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "account_domains_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "account_domains_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounts: {
         Row: {
           account_type: string | null
@@ -200,6 +260,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "activities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -385,6 +452,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "attachments_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -756,6 +830,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "buildings_import_batch_id_fkey"
             columns: ["import_batch_id"]
             isOneToOne: false
@@ -975,6 +1056,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "contacts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -1365,6 +1453,170 @@ export type Database = {
           },
         ]
       }
+      ingest_suggestions: {
+        Row: {
+          applied_batch_id: string | null
+          confidence: Database["public"]["Enums"]["match_confidence"]
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          dedupe_key: string
+          expires_at: string | null
+          id: string
+          ingested_item_id: string | null
+          kind: Database["public"]["Enums"]["suggestion_kind"]
+          payload: Json
+          quote: string | null
+          quote_end: number | null
+          quote_start: number | null
+          rationale: string
+          status: Database["public"]["Enums"]["suggestion_status"]
+          subject_id: string | null
+          subject_table: string
+        }
+        Insert: {
+          applied_batch_id?: string | null
+          confidence: Database["public"]["Enums"]["match_confidence"]
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          dedupe_key: string
+          expires_at?: string | null
+          id?: string
+          ingested_item_id?: string | null
+          kind: Database["public"]["Enums"]["suggestion_kind"]
+          payload: Json
+          quote?: string | null
+          quote_end?: number | null
+          quote_start?: number | null
+          rationale: string
+          status?: Database["public"]["Enums"]["suggestion_status"]
+          subject_id?: string | null
+          subject_table: string
+        }
+        Update: {
+          applied_batch_id?: string | null
+          confidence?: Database["public"]["Enums"]["match_confidence"]
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          dedupe_key?: string
+          expires_at?: string | null
+          id?: string
+          ingested_item_id?: string | null
+          kind?: Database["public"]["Enums"]["suggestion_kind"]
+          payload?: Json
+          quote?: string | null
+          quote_end?: number | null
+          quote_start?: number | null
+          rationale?: string
+          status?: Database["public"]["Enums"]["suggestion_status"]
+          subject_id?: string | null
+          subject_table?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingest_suggestions_applied_batch_id_fkey"
+            columns: ["applied_batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingest_suggestions_decided_by_fkey"
+            columns: ["decided_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingest_suggestions_ingested_item_id_fkey"
+            columns: ["ingested_item_id"]
+            isOneToOne: false
+            referencedRelation: "ingested_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingested_items: {
+        Row: {
+          activity_id: string | null
+          direction: string | null
+          external_id: string
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          mailbox_id: string | null
+          matched_by: Database["public"]["Enums"]["match_confidence"] | null
+          next_step_id: string | null
+          occurred_at: string
+          participants: Json
+          snippet: string | null
+          source: Database["public"]["Enums"]["activity_source"]
+          status: Database["public"]["Enums"]["ingest_item_status"]
+          subject: string
+          thread_key: string | null
+        }
+        Insert: {
+          activity_id?: string | null
+          direction?: string | null
+          external_id: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          mailbox_id?: string | null
+          matched_by?: Database["public"]["Enums"]["match_confidence"] | null
+          next_step_id?: string | null
+          occurred_at: string
+          participants?: Json
+          snippet?: string | null
+          source: Database["public"]["Enums"]["activity_source"]
+          status?: Database["public"]["Enums"]["ingest_item_status"]
+          subject?: string
+          thread_key?: string | null
+        }
+        Update: {
+          activity_id?: string | null
+          direction?: string | null
+          external_id?: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          mailbox_id?: string | null
+          matched_by?: Database["public"]["Enums"]["match_confidence"] | null
+          next_step_id?: string | null
+          occurred_at?: string
+          participants?: Json
+          snippet?: string | null
+          source?: Database["public"]["Enums"]["activity_source"]
+          status?: Database["public"]["Enums"]["ingest_item_status"]
+          subject?: string
+          thread_key?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingested_items_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingested_items_mailbox_id_fkey"
+            columns: ["mailbox_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingested_items_next_step_id_fkey"
+            columns: ["next_step_id"]
+            isOneToOne: false
+            referencedRelation: "next_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inspections: {
         Row: {
           area_breakdown: Json | null
@@ -1544,6 +1796,205 @@ export type Database = {
         }
         Relationships: []
       }
+      next_steps: {
+        Row: {
+          account_id: string | null
+          activity_id: string | null
+          all_day: boolean
+          building_id: string | null
+          completed_at: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          detail: string | null
+          due_at: string | null
+          employee_id: string | null
+          external_id: string | null
+          id: string
+          import_batch_id: string | null
+          opportunity_id: string | null
+          origin: Database["public"]["Enums"]["next_step_origin"]
+          owner_id: string | null
+          source: Database["public"]["Enums"]["activity_source"]
+          status: Database["public"]["Enums"]["next_step_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string | null
+          activity_id?: string | null
+          all_day?: boolean
+          building_id?: string | null
+          completed_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          detail?: string | null
+          due_at?: string | null
+          employee_id?: string | null
+          external_id?: string | null
+          id?: string
+          import_batch_id?: string | null
+          opportunity_id?: string | null
+          origin?: Database["public"]["Enums"]["next_step_origin"]
+          owner_id?: string | null
+          source?: Database["public"]["Enums"]["activity_source"]
+          status?: Database["public"]["Enums"]["next_step_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string | null
+          activity_id?: string | null
+          all_day?: boolean
+          building_id?: string | null
+          completed_at?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          detail?: string | null
+          due_at?: string | null
+          employee_id?: string | null
+          external_id?: string | null
+          id?: string
+          import_batch_id?: string | null
+          opportunity_id?: string | null
+          origin?: Database["public"]["Enums"]["next_step_origin"]
+          owner_id?: string | null
+          source?: Database["public"]["Enums"]["activity_source"]
+          status?: Database["public"]["Enums"]["next_step_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "next_steps_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "next_steps_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "next_steps_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "next_steps_activity_id_fkey"
+            columns: ["activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "next_steps_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "next_steps_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_mrr_by_month"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "next_steps_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "v_staff_movement"
+            referencedColumns: ["employee_id"]
+          },
+          {
+            foreignKeyName: "next_steps_import_batch_id_fkey"
+            columns: ["import_batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "next_steps_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "next_steps_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_weighted_pipeline"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "next_steps_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       opportunities: {
         Row: {
           account_id: string | null
@@ -1667,6 +2118,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -1925,6 +2383,7 @@ export type Database = {
           full_name: string
           id: string
           is_active: boolean
+          is_service: boolean
           role: Database["public"]["Enums"]["user_role"]
           sees_rates: boolean
           updated_at: string
@@ -1935,6 +2394,7 @@ export type Database = {
           full_name?: string
           id: string
           is_active?: boolean
+          is_service?: boolean
           role?: Database["public"]["Enums"]["user_role"]
           sees_rates?: boolean
           updated_at?: string
@@ -1945,6 +2405,7 @@ export type Database = {
           full_name?: string
           id?: string
           is_active?: boolean
+          is_service?: boolean
           role?: Database["public"]["Enums"]["user_role"]
           sees_rates?: boolean
           updated_at?: string
@@ -2445,6 +2906,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "buildings_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
@@ -2521,6 +2989,13 @@ export type Database = {
             referencedRelation: "v_account_mrr_change"
             referencedColumns: ["account_id"]
           },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
         ]
       }
       v_building_labor_margin: {
@@ -2552,6 +3027,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -2616,6 +3098,13 @@ export type Database = {
             referencedColumns: ["account_id"]
           },
           {
+            foreignKeyName: "buildings_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "buildings_property_type_id_fkey"
             columns: ["property_type_id"]
             isOneToOne: false
@@ -2670,6 +3159,15 @@ export type Database = {
             referencedColumns: ["building_id"]
           },
         ]
+      }
+      v_domain_candidates: {
+        Row: {
+          account_id: string | null
+          account_name: string | null
+          contact_count: number | null
+          domain: string | null
+        }
+        Relationships: []
       }
       v_gap_census: {
         Row: {
@@ -2762,6 +3260,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -2900,6 +3405,34 @@ export type Database = {
         }
         Relationships: []
       }
+      v_quiet_accounts: {
+        Row: {
+          account_id: string | null
+          account_name: string | null
+          days_quiet: number | null
+          has_open_deal: boolean | null
+          last_activity: string | null
+          monthly_value: number | null
+          owner_id: string | null
+          secondary_owner_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounts_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "accounts_secondary_owner_id_fkey"
+            columns: ["secondary_owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_staff_movement: {
         Row: {
           employee_id: string | null
@@ -2914,13 +3447,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["from_building_id"]
-            isOneToOne: false
-            referencedRelation: "buildings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
             referencedRelation: "buildings"
@@ -2930,8 +3456,8 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_current_value"
-            referencedColumns: ["building_id"]
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
@@ -2944,7 +3470,7 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_hours"
+            referencedRelation: "v_building_current_value"
             referencedColumns: ["building_id"]
           },
           {
@@ -2957,13 +3483,20 @@ export type Database = {
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["to_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["to_building_id"]
+            columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
@@ -3005,6 +3538,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
             referencedColumns: ["account_id"]
           },
           {
@@ -3070,6 +3610,7 @@ export type Database = {
       }
       is_admin: { Args: never; Returns: boolean }
       is_member: { Args: never; Returns: boolean }
+      is_public_email_domain: { Args: { p_domain: string }; Returns: boolean }
       rollback_field_changes: { Args: { p_batch_id: string }; Returns: Json }
       set_building_monthly_value: {
         Args: {
@@ -3114,7 +3655,11 @@ export type Database = {
       employee_status: "active" | "terminated" | "leave"
       health_score: "healthy" | "needs_attention" | "at_risk"
       import_status: "draft" | "previewed" | "committed" | "rolled_back"
+      ingest_item_status: "new" | "linked" | "needs_review" | "ignored"
       loss_reason_scope: "building" | "opportunity" | "both"
+      match_confidence: "exact" | "domain" | "inferred"
+      next_step_origin: "calendar" | "commitment" | "manual"
+      next_step_status: "open" | "done" | "dismissed"
       operating_entity: "beales" | "afs"
       parse_status: "pending" | "parsed" | "needs_review" | "approved"
       project_status:
@@ -3125,6 +3670,12 @@ export type Database = {
         | "cancelled"
         | "invoiced"
       staffing_line_status: "unmatched" | "matched" | "ignored"
+      suggestion_kind:
+        | "link_activity"
+        | "create_contact"
+        | "field_value"
+        | "next_step"
+      suggestion_status: "open" | "accepted" | "rejected" | "superseded"
       user_role: "admin" | "leadership" | "field"
     }
     CompositeTypes: {
@@ -3290,7 +3841,11 @@ export const Constants = {
       employee_status: ["active", "terminated", "leave"],
       health_score: ["healthy", "needs_attention", "at_risk"],
       import_status: ["draft", "previewed", "committed", "rolled_back"],
+      ingest_item_status: ["new", "linked", "needs_review", "ignored"],
       loss_reason_scope: ["building", "opportunity", "both"],
+      match_confidence: ["exact", "domain", "inferred"],
+      next_step_origin: ["calendar", "commitment", "manual"],
+      next_step_status: ["open", "done", "dismissed"],
       operating_entity: ["beales", "afs"],
       parse_status: ["pending", "parsed", "needs_review", "approved"],
       project_status: [
@@ -3302,6 +3857,13 @@ export const Constants = {
         "invoiced",
       ],
       staffing_line_status: ["unmatched", "matched", "ignored"],
+      suggestion_kind: [
+        "link_activity",
+        "create_contact",
+        "field_value",
+        "next_step",
+      ],
+      suggestion_status: ["open", "accepted", "rejected", "superseded"],
       user_role: ["admin", "leadership", "field"],
     },
   },

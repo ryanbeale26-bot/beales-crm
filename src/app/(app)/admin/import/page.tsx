@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { date } from '@/lib/format'
 import { getCurrentProfile } from '@/lib/reference'
@@ -43,7 +45,21 @@ export default async function ImportPage() {
     <div>
       <PageHeader
         title="Import"
-        subtitle="Fill in what the spreadsheet never had, or bring new records across. Nothing is written until you have seen the preview, and every import can be undone."
+        subtitle={
+          <>
+            Fill in what the spreadsheet never had, or bring new records across. Nothing is written
+            until you have seen the preview, and every import can be undone — including a batch of
+            suggestions applied from{' '}
+            <Link href="/review" className="underline">
+              Review
+            </Link>
+            . The nightly job that produces those is set up on the{' '}
+            <Link href="/admin/ingest" className="underline">
+              ingest
+            </Link>{' '}
+            page.
+          </>
+        }
       />
 
       <GapCensus />

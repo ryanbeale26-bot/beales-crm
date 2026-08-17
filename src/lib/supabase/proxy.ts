@@ -8,7 +8,13 @@ function isPublicPath(pathname: string): boolean {
   return (
     pathname === '/login' ||
     pathname === '/setup' ||
-    pathname.startsWith('/auth/')
+    pathname.startsWith('/auth/') ||
+    // The nightly ingest arrives from Vercel Cron with no cookie and no
+    // session. It authenticates itself against CRON_SECRET inside the route,
+    // and signs in to Supabase as the ingest profile from there. Bouncing it to
+    // /login here would make the job fail every night with a 307 that nothing
+    // reads and nothing reports — the worst kind of broken.
+    pathname.startsWith('/api/cron/')
   )
 }
 

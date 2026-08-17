@@ -55,7 +55,13 @@ export default async function OpportunitiesPage({
       .select('id, name, probability, sort_order, is_won, is_lost')
       .eq('is_active', true)
       .order('sort_order'),
-    supabase.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
+    // Active people only, and never the nightly ingest — it owns nothing.
+    supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('is_active', true)
+      .eq('is_service', false)
+      .order('full_name'),
     supabase.from('v_pipeline_funnel').select('*').order('stage_sort_order'),
     getLossReasons('opportunity'),
     getCompetitors(),

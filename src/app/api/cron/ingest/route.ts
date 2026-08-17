@@ -1,0 +1,88 @@
+import { timingSafeEqual } from 'node:crypto'
+
+import { NextResponse, type NextRequest } from 'next/server'
+
+import { cronSecret } from '@/lib/env'
+import { fixtureSource } from '@/lib/ingest/fixtures'
+import { runIngest } from '@/lib/ingest/run'
+import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
+
+/**
+ * The nightly ingest.
+ *
+ * Vercel Cron calls this with `Authorization: Bearer $CRON_SECRET`. There is no
+ * session cookie, which is why `isPublicPath()` in the proxy lets /api/cron/
+ * through — without that this route would redirect to /login every night and
+ * report success while doing nothing at all.
+ *
+ * 800 seconds is the Pro ceiling with Fluid Compute enabled (300 without it).
+ * The run stops itself 100 seconds short of that, which is the difference
+ * between a clean pause and a killed function.
+ *
+ * The schedule is in vercel.json, which is strict JSON and cannot carry a
+ * comment, so it is explained here instead. Two entries, 07:00 and 09:00 —
+ * **UTC**, which Vercel does not offer an alternative to. That is 03:00 and
+ * 05:00 in Boston through the summer and 02:00 and 04:00 once the clocks go
+ * back, which is why the job appears to move by an hour twice a year. The
+ * second pass is a drain: if the first stopped at its deadline with work left,
+ * the second finishes it, because every item's state is a row rather than a
+ * position in a loop. A route that re-invoked itself would be a recursion bug
+ * and a billing incident waiting to happen.
+ */
+
+export const maxDuration = 800
+export const dynamic = 'force-dynamic'
+
+/** Leave enough room to finish the item in hand and write the summary. */
+const HEADROOM_MS = 100_000
+
+/** How far back a run looks. The connectors in 7b will hold a real cursor;
+ *  until then this only bounds the fixture source. */
+const LOOKBACK_DAYS = 2
+
+function authorised(request: NextRequest): boolean {
+  const header = request.headers.get('authorization') ?? ''
+  const expected = `Bearer ${cronSecret()}`
+  // Constant time, and length-checked first because timingSafeEqual throws on
+  // a length mismatch rather than returning false.
+  const a = Buffer.from(header)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+export async function GET(request: NextRequest) {
+  const startedAt = Date.now()
+
+  if (!authorised(request)) {
+    return NextResponse.json({ error: 'Not authorised' }, { status: 401 })
+  }
+
+  try {
+    const supabase = await createIngestClient()
+    const actorId = await ingestProfileId(supabase)
+
+    const summary = await runIngest(supabase, {
+      // 7b replaces this with the Graph and Granola connectors. They export the
+      // same shape, so this list is the only line that changes.
+      sources: [{ name: 'fixtures', fetch: fixtureSource }],
+      since: new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString(),
+      deadline: startedAt + maxDuration * 1000 - HEADROOM_MS,
+      actorId,
+    })
+
+    // Deliberately 200 even when items failed. Vercel retries a failed cron,
+    // and a retry storm against a throttled API is worse than waiting a day —
+    // the per-item state is in the database, so the next run resumes anyway.
+    return NextResponse.json({
+      ok: summary.errors.length === 0,
+      ranForMs: Date.now() - startedAt,
+      ...summary,
+    })
+  } catch (caught) {
+    // A failure to sign in or to read the directory is different: nothing ran,
+    // and it will not fix itself. This one is worth a non-200 so it shows up
+    // red in Vercel's cron log.
+    const message = caught instanceof Error ? caught.message : String(caught)
+    return NextResponse.json({ ok: false, error: message }, { status: 500 })
+  }
+}

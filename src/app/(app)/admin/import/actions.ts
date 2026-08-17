@@ -136,9 +136,10 @@ async function buildFillTargets(
     await Promise.all([
       fetchScope(supabase, scope),
       supabase.from('property_types').select('id, name').eq('is_active', true),
-      // Active profiles only. Brendan and the QA logins are deactivated and
-      // must never be offered as an owner in an error message.
-      supabase.from('profiles').select('id, full_name').eq('is_active', true),
+      // Active people only. Brendan and the QA logins are deactivated and must
+      // never be offered as an owner in an error message; the nightly ingest is
+      // active because RLS requires it, and is excluded for the same reason.
+      supabase.from('profiles').select('id, full_name').eq('is_active', true).eq('is_service', false),
       supabase.from('accounts').select('id, name').is('deleted_at', null),
       supabase.from('contacts').select('id, first_name, last_name, email').is('deleted_at', null),
     ])
@@ -1246,6 +1247,9 @@ export async function rollbackImport(
   // carries the stamp, and fill_building_contract_value() refuses to stamp one
   // that already existed.
   const steps: [string, string][] = [
+    // next_steps first: it references activities, and an accepted ingest
+    // suggestion can create one.
+    ['next_steps', 'next steps'],
     ['activities', 'activities'],
     ['opportunities', 'deals'],
     ['building_contract_periods', 'contract values'],

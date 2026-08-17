@@ -1186,6 +1186,379 @@ async function main() {
   )
 
   // ---------------------------------------------------------------------------
+  console.log('\nNightly ingest')
+
+  const I = (n) => `eeeeeeee-0000-4000-8000-00000000e0${String(n).padStart(2, '0')}`
+  const [
+    ING_ACCOUNT,
+    ING_ACCOUNT_2,
+    ING_BUILDING,
+    ING_ACTIVITY,
+    ING_ACTIVITY_2,
+    ING_DEAL,
+    ING_BATCH,
+    ING_CONTACT_A,
+    ING_CONTACT_B,
+  ] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(I)
+
+  const INGEST = '33333333-0000-4000-8000-000000000009'
+  const emailType = await db.query(`select id from activity_types where name = 'Email'`)
+  const ingestStage = await db.query(
+    `select id from pipeline_stages where not is_won and not is_lost order by sort_order limit 1`,
+  )
+
+  await db.exec(`
+    insert into auth.users (id, email, raw_user_meta_data)
+      values ('${INGEST}', 'ingest@example.test', '{"full_name":"Nightly ingest"}');
+    update profiles set role = 'field', sees_rates = false, is_active = true, is_service = true
+      where id = '${INGEST}';
+
+    insert into accounts (id, name) values
+      ('${ING_ACCOUNT}',   'Ingest Test Co'),
+      ('${ING_ACCOUNT_2}', 'Ingest Other Co');
+    insert into buildings (id, account_id, name)
+      values ('${ING_BUILDING}', '${ING_ACCOUNT}', 'Ingest Test Site');
+    insert into opportunities (id, name, stage_id, account_id)
+      values ('${ING_DEAL}', 'Ingest Test Deal', '${ingestStage.rows[0].id}', '${ING_ACCOUNT}');
+    insert into activities (id, activity_type_id, subject, occurred_at)
+      values ('${ING_ACTIVITY}',   '${emailType.rows[0].id}', 'Ingest orphan one', now()),
+             ('${ING_ACTIVITY_2}', '${emailType.rows[0].id}', 'Ingest orphan two', now());
+    insert into import_batches (id, source_tab, status)
+      values ('${ING_BATCH}', 'Ingest suggestions · test', 'draft');
+  `)
+
+  // --- The machine account ---------------------------------------------------
+  // It has to be ACTIVE, because is_member() requires it and RLS refuses every
+  // write otherwise — which is exactly why it cannot be hidden by deactivating
+  // it, and why is_service exists at all.
+  const ingestWrites = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into activities (activity_type_id, subject, occurred_at, account_id, source, external_id)
+         values ($1, 'Written by the nightly job', now(), '${ING_ACCOUNT}', 'outlook', '<verify-1@test>')
+         returning id`,
+        [emailType.rows[0].id],
+      )
+      .then((r) => r.rows[0]?.id)
+      .catch(() => null),
+  )
+  check('a service profile passes is_member() and can write an activity', Boolean(ingestWrites))
+
+  const ingestAudit = await db.query(
+    `select changed_by from audit_log where record_id = '${ingestWrites}' limit 1`,
+  )
+  check(
+    'the audit log records the machine account by name, not nobody',
+    String(ingestAudit.rows[0]?.changed_by) === INGEST,
+    JSON.stringify(ingestAudit.rows[0]),
+  )
+
+  const ingestIsAdmin = await asUser(db, INGEST, () => db.query(`select public.is_admin() as ok`))
+  check('a service profile is not an admin', ingestIsAdmin.rows[0]?.ok === false)
+
+  const ingestRates = await asUser(db, INGEST, () =>
+    db.query(`select count(*)::int as n from employee_compensation`),
+  )
+  check('a service profile cannot read pay rates', ingestRates.rows[0].n === 0)
+
+  // --- Idempotency -----------------------------------------------------------
+  const dupActivity = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into activities (activity_type_id, subject, occurred_at, source, external_id)
+         values ($1, 'Same email again', now(), 'outlook', '<verify-1@test>')`,
+        [emailType.rows[0].id],
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('the same email cannot be logged twice', dupActivity)
+
+  await asUser(db, INGEST, () =>
+    db.exec(`
+      insert into ingested_items (source, external_id, mailbox_id, occurred_at, subject)
+        values ('granola', 'note-1', null, now(), 'A meeting note');
+    `),
+  )
+  const dupMirror = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into ingested_items (source, external_id, mailbox_id, occurred_at, subject)
+         values ('granola', 'note-1', null, now(), 'A meeting note')`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  // NULLS NOT DISTINCT. Without it two nulls count as different and every
+  // Granola note would re-insert on every single run, forever.
+  check('a mirrored item with no mailbox still cannot arrive twice', dupMirror)
+
+  // --- next_steps: the account roll-up ---------------------------------------
+  const rollup = await asUser(db, INGEST, () =>
+    db.query(
+      `insert into next_steps (title, building_id) values ('From a building', '${ING_BUILDING}')
+       returning account_id`,
+    ),
+  )
+  check('a next step on a building rolls up to its account',
+    String(rollup.rows[0]?.account_id) === ING_ACCOUNT)
+
+  const rollupDeal = await asUser(db, INGEST, () =>
+    db.query(
+      `insert into next_steps (title, opportunity_id) values ('From a deal', '${ING_DEAL}')
+       returning account_id`,
+    ),
+  )
+  check('a next step on a deal rolls up to its account',
+    String(rollupDeal.rows[0]?.account_id) === ING_ACCOUNT)
+
+  await db.exec(`
+    insert into contacts (id, first_name, last_name, email, account_id)
+      values ('${ING_CONTACT_A}', 'Ingest', 'Contact', 'shared@ingest.test', '${ING_ACCOUNT}');
+  `)
+  const rollupContact = await asUser(db, INGEST, () =>
+    db.query(
+      `insert into next_steps (title, contact_id) values ('From a contact', '${ING_CONTACT_A}')
+       returning account_id`,
+    ),
+  )
+  check('a next step on a contact rolls up to its account',
+    String(rollupContact.rows[0]?.account_id) === ING_ACCOUNT)
+
+  const rollupExplicit = await asUser(db, INGEST, () =>
+    db.query(
+      `insert into next_steps (title, building_id, account_id)
+       values ('Told which account', '${ING_BUILDING}', '${ING_ACCOUNT_2}')
+       returning account_id`,
+    ),
+  )
+  check('an explicit account on a next step is never overwritten',
+    String(rollupExplicit.rows[0]?.account_id) === ING_ACCOUNT_2)
+
+  const nextStepDup = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into next_steps (title, source, external_id) values ('a', 'outlook_calendar', 'ical-1');
+         insert into next_steps (title, source, external_id) values ('b', 'outlook_calendar', 'ical-1');`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('the same calendar event cannot become two next steps', nextStepDup)
+
+  // --- The allowlist ---------------------------------------------------------
+  const linkApplied = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('activities', $1, $2::jsonb, $3) as n`, [
+      ING_ACTIVITY,
+      JSON.stringify({ opportunity_id: ING_DEAL, account_id: ING_ACCOUNT }),
+      ING_BATCH,
+    ]),
+  )
+  check('an accepted link writes the deal and the account', linkApplied.rows[0]?.n === 2)
+
+  for (const column of ['subject', 'occurred_at', 'source', 'external_id']) {
+    const refused = await asUser(db, RYAN, () =>
+      db
+        .query(`select public.apply_gap_fill('activities', $1, $2::jsonb, $3)`, [
+          ING_ACTIVITY,
+          JSON.stringify({ [column]: 'rewritten' }),
+          ING_BATCH,
+        ])
+        .then(() => false)
+        .catch(() => true),
+    )
+    // The machine may say what an activity is ABOUT. Never what it says.
+    check(`a suggestion cannot rewrite activities.${column}`, refused)
+  }
+
+  // --- The trigger-versus-journal trap ---------------------------------------
+  // set_activity_account() is a BEFORE trigger that fills account_id when
+  // building_id is set, but apply_gap_fill journals only the columns it wrote
+  // itself. Patch building_id alone and undo puts the building back while
+  // leaving the account stamped — a state the row was never in. This asserts
+  // the trap is real, so nobody removes the workaround thinking it is dead code.
+  await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('activities', $1, $2::jsonb, $3)`, [
+      ING_ACTIVITY_2,
+      JSON.stringify({ building_id: ING_BUILDING }),
+      ING_BATCH,
+    ]),
+  )
+  const trapped = await db.query(
+    `select a.account_id,
+            (select count(*)::int from import_field_changes f
+              where f.batch_id = '${ING_BATCH}' and f.record_id = a.id
+                and f.column_name = 'account_id') as journalled
+       from activities a where a.id = '${ING_ACTIVITY_2}'`,
+  )
+  check(
+    'the trigger fills account_id behind a patch, and does not journal it',
+    String(trapped.rows[0]?.account_id) === ING_ACCOUNT && trapped.rows[0]?.journalled === 0,
+    JSON.stringify(trapped.rows[0]),
+  )
+
+  const undone = await asUser(db, RYAN, () =>
+    db.query(`select public.rollback_field_changes('${ING_BATCH}') as r`),
+  )
+  const afterLinkUndo = await db.query(
+    `select id, account_id, opportunity_id, building_id from activities
+      where id in ('${ING_ACTIVITY}', '${ING_ACTIVITY_2}') order by subject`,
+  )
+  const one = afterLinkUndo.rows.find((r) => String(r.id) === ING_ACTIVITY)
+  const two = afterLinkUndo.rows.find((r) => String(r.id) === ING_ACTIVITY_2)
+  check(
+    'naming the account in the payload undoes both columns cleanly',
+    one?.account_id === null && one?.opportunity_id === null,
+    JSON.stringify(one),
+  )
+  check(
+    'undo leaves the trigger-filled account behind when it was never named',
+    two?.building_id === null && two?.account_id !== null,
+    JSON.stringify(two),
+  )
+  check('undo reports what it reverted', Number(undone.rows[0]?.r?.reverted ?? 0) >= 3,
+    JSON.stringify(undone.rows[0]?.r))
+
+  const undoKeptRows = await db.query(
+    `select count(*)::int as n from activities where id in ('${ING_ACTIVITY}', '${ING_ACTIVITY_2}')`,
+  )
+  check('undo never deletes the activity itself', undoKeptRows.rows[0].n === 2)
+
+  // --- Suggestions -----------------------------------------------------------
+  const noQuote = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into ingest_suggestions (kind, confidence, subject_table, subject_id, payload, rationale, dedupe_key)
+         values ('field_value', 'inferred', 'buildings', '${ING_BUILDING}', '{}'::jsonb, 'because', 'k-no-quote')`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('a model-read suggestion with no verified quote is refused', noQuote)
+
+  const noSubject = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into ingest_suggestions (kind, confidence, subject_table, payload, rationale, dedupe_key)
+         values ('link_activity', 'exact', 'activities', '{}'::jsonb, 'because', 'k-no-subject')`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('a patch with nothing to patch is refused', noSubject)
+
+  await asUser(db, INGEST, () =>
+    db.exec(
+      `insert into ingest_suggestions (kind, confidence, subject_table, subject_id, payload, rationale, dedupe_key, status)
+       values ('link_activity', 'exact', 'activities', '${ING_ACTIVITY}', '{"account_id":"${ING_ACCOUNT}"}'::jsonb,
+               'matched', 'k-said-no', 'rejected')`,
+    ),
+  )
+  const noMeansNo = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `insert into ingest_suggestions (kind, confidence, subject_table, subject_id, payload, rationale, dedupe_key)
+         values ('link_activity', 'exact', 'activities', '${ING_ACTIVITY}', '{"account_id":"${ING_ACCOUNT}"}'::jsonb,
+                 'matched', 'k-said-no')`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  // Without this the nightly job re-proposes everything already turned down,
+  // every night, and the review screen is unusable inside a month.
+  check('a suggestion already rejected can never be proposed again', noMeansNo)
+
+  // --- Domains ---------------------------------------------------------------
+  await asUser(db, RYAN, () =>
+    db.exec(`insert into account_domains (domain, account_id) values ('ingest-test.com', '${ING_ACCOUNT}')`),
+  )
+  const domainClash = await asUser(db, RYAN, () =>
+    db
+      .query(
+        `insert into account_domains (domain, account_id) values ('ingest-test.com', '${ING_ACCOUNT_2}')`,
+      )
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('one domain cannot mean two accounts', domainClash)
+
+  const victorAddsDomain = await asUser(db, VICTOR, () =>
+    db
+      .query(`insert into account_domains (domain, account_id) values ('victor.test', '${ING_ACCOUNT}')`)
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('only an admin can change the domain map', victorAddsDomain)
+
+  const publicDomains = await db.query(`
+    select public.is_public_email_domain('gmail.com')      as gmail,
+           public.is_public_email_domain('bealesllc.com')  as own,
+           public.is_public_email_domain('tuftsmedicine.org') as client
+  `)
+  check(
+    'personal and internal domains are never mappable',
+    publicDomains.rows[0].gmail === true &&
+      publicDomains.rows[0].own === true &&
+      publicDomains.rows[0].client === false,
+    JSON.stringify(publicDomains.rows[0]),
+  )
+
+  // A domain whose contacts sit under two accounts could only ever be wrong,
+  // so it is never offered — the constraint should not be what tells you.
+  await db.exec(`
+    insert into contacts (id, first_name, last_name, email, account_id)
+      values ('${ING_CONTACT_B}', 'Split', 'Domain', 'b@split.test', '${ING_ACCOUNT_2}');
+    insert into contacts (first_name, last_name, email, account_id)
+      values ('Split', 'Domain Two', 'a@split.test', '${ING_ACCOUNT}');
+  `)
+  const candidates = await asUser(db, RYAN, () => db.query(`select * from v_domain_candidates`))
+  const domains = candidates.rows.map((r) => r.domain)
+  check('a domain spanning two accounts is not offered', !domains.includes('split.test'),
+    JSON.stringify(domains))
+  check('a domain already mapped is not offered again', !domains.includes('ingest-test.com'))
+  check('a real single-account domain is offered', domains.includes('ingest.test'),
+    JSON.stringify(domains))
+
+  // --- Silence ---------------------------------------------------------------
+  const quiet = await asUser(db, RYAN, () => db.query(`select * from v_quiet_accounts`))
+  check('quiet accounts are readable by a signed-in member', quiet.rows.length > 0)
+  const quietDeal = quiet.rows.find((r) => String(r.account_id) === ING_ACCOUNT)
+  check('an account with an open deal says so', quietDeal?.has_open_deal === true,
+    JSON.stringify(quietDeal))
+
+  // --- Grants are a snapshot, not a rule --------------------------------------
+  for (const object of [
+    'next_steps',
+    'ingest_suggestions',
+    'ingested_items',
+    'account_domains',
+    'v_quiet_accounts',
+    'v_domain_candidates',
+  ]) {
+    const readable = await asUser(db, RYAN, () =>
+      db
+        .query(`select count(*) from ${object}`)
+        .then(() => true)
+        .catch(() => false),
+    )
+    check(`authenticated can select ${object}`, readable)
+  }
+
+  // The list in addresses.ts and the SQL function have to agree, or the view
+  // offers a domain the matcher will then refuse to use.
+  const addressesTs = await readFile(
+    new URL('../src/lib/ingest/addresses.ts', import.meta.url).pathname,
+    'utf8',
+  )
+  const sqlDomains = await db.query(`
+    select unnest(array['gmail.com','outlook.com','yahoo.com','icloud.com','bealesllc.com']) as d
+  `)
+  check(
+    'the freemail list in TypeScript matches the one in SQL',
+    sqlDomains.rows.every((r) => addressesTs.includes(`'${r.d}'`)),
+  )
+
+  // ---------------------------------------------------------------------------
   console.log('\nDemo seed data')
 
   const seedSql = await readFile(

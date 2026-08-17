@@ -178,25 +178,197 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
       open deals, contacts, accounts. The gap census is now a Postgres view on the Import page,
       so nobody has to count the blanks by hand again. **The data entry itself is Ryan's to do**
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
-- [ ] **Phase 7+** — Integrations, one per phase, in the order above
+- [x] **Phase 7a** — The nightly ingest spine. Migration, the machine account, the cron route, the
+      three confidence tiers, `next_steps`, the review queue, the domain map, and the workbook
+      relink that gives 113 orphan activities a deal. Runs on fixtures; no external credentials
+      needed or used
+- [ ] **Phase 7b** — Microsoft Graph: mail + calendar, delta tokens, the multi-mailbox loop,
+      `ingest_runs`. **Blocked on the app registration and 3–4 real samples**
+- [ ] **Phase 7c** — Granola notes, joined to calendar events by `iCalUId`
+- [ ] **Phase 7d** — The extraction layer: written commitments as next steps, non-revenue
+      gap-fill proposals. Money is never model-proposed
+- [ ] **Phase 8+** — The remaining integrations: InspectQA, then the payroll email ingest
+
+**The order changed on purpose.** This file used to put InspectQA and payroll before mail, after
+Phase 6. Ryan moved mail, calendar and Granola to the front on 2026-08-17, for two reasons worth
+keeping: activity logging is the habit the whole CRM depends on and nobody is doing it by hand,
+and 374 of 667 activities are attached to nothing — so this was the moment to fix how matching
+works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 5b shipped. The gap-filler is built, tested end to end against the real database and
-committed; the migration is **already applied** to `beales-crm`. Phases 1–5 are live at
-`https://beales-crm.vercel.app`. **All five spreadsheet tabs are imported** — 22 accounts,
-38 buildings, 97 contacts, 667 activities, 55 opportunities. The Google Sheet is no longer the
-source of truth for anything the CRM holds. **Last session:** 2026-08-17
+**Phase:** 7a shipped. The nightly ingest spine is built, tested end to end against the real
+database and committed; migration `20260818090000_ingest.sql` is **already applied** to
+`beales-crm`. Phases 1–5b are live at `https://beales-crm.vercel.app`. **All five spreadsheet tabs
+are imported** — 22 accounts, 38 buildings, 97 contacts, 667 activities, 55 opportunities.
+**Last session:** 2026-08-17
 
-**Next: the data entry itself, then Phase 6.** The tool now exists; the blanks are still blank.
-Nothing else in the app gets more truthful until Ryan downloads the four sheets and fills them in.
-Phase 6 (mobile polish, Cmd-K search, audit log, inviting the team) is the next code phase.
+**Next, in this order:**
 
-Live counts: 7 import batches (5 committed spreadsheet imports, plus 2 gap-fill batches from this
-session's testing, both **rolled back** — they are test residue and can be ignored or deleted),
-8 win reasons, 1 competitor (Janitronics). **`employees`, `employee_assignments` and `projects`
-are all still empty** — nothing in the workbook feeds them, which is the first thing Phase 4 has
-to solve.
+1. **Ryan's setup, which unblocks 7b.** The Entra app registration, admin consent for `Mail.Read`
+   and `Calendars.Read`, and the `New-ApplicationAccessPolicy` command that scopes it to a
+   mail-enabled security group — see "What Ryan has to set up" below. Then 3–4 real samples
+   before a single line of parser is written.
+2. **The Vercel environment variables**, or the cron runs nowhere. Also confirm Fluid Compute is
+   on, or Pro caps the function at 300s instead of 800s.
+3. **The gap-fill data entry**, still untouched and still the thing that makes every number in
+   the app more truthful.
+4. **Phase 6** — mobile polish, Cmd-K, audit log UI, inviting the team.
+
+Live counts: 7 import batches (5 committed spreadsheet imports, plus 2 gap-fill batches from the
+5b session, both **rolled back** — test residue, ignorable), 8 win reasons, 1 competitor
+(Janitronics). **`employees`, `employee_assignments` and `projects` are all still empty** —
+nothing in the workbook feeds them, which is the first thing Phase 4 has to solve.
+`ingested_items`, `next_steps`, `ingest_suggestions` and `account_domains` are all empty too:
+7a's testing was cleaned out deliberately, and nothing arrives in them until 7b has credentials.
+
+### What Phase 7a shipped
+
+The nightly job reads a source, turns what already happened into `activities` and what has not
+happened yet into `next_steps`, applies a link **only when it is a fact**, and leaves everything
+else as a suggestion that expires on its own.
+
+Ryan's four decisions, taken 2026-08-17:
+
+| | |
+|---|---|
+| **Where it runs** | Vercel Cron → `/api/cron/ingest`. The job signs in as a real Supabase profile. **The service role key still never goes near Vercel** |
+| **Whose mail** | One Graph app registration scoped to a mail-enabled security group. The group starts with Ryan alone; adding the other four later is a membership change, no code, no redeploy. The schema is multi-mailbox from day one so nothing needs migrating when they join |
+| **How much mail** | Only messages where a participant matches a known contact, or whose domain maps to an account. Everything else is left alone — address recorded, nothing more |
+| **Shared email** | One email to several colleagues becomes **one** activity, credited to the sender if the sender is one of the five, else the first of them on the message |
+| **What is stored** | Sender, recipients, subject, timestamp, ~500 characters. **No full bodies, ever** |
+
+| Thing | Why it is the way it is |
+|---|---|
+| **`isPublicPath()` in `proxy.ts` lets `/api/cron/` through** | The matcher covers `/api/*` and Vercel Cron carries no session cookie, so every nightly run would have 307'd to `/login` and reported success. One line, and the failure it prevents is silent |
+| **The job signs in as `ingest@bealesllc.com`, a profile flagged `is_service`** | The rule `.env.local.example` protects is "the deployed app can never do more than a signed-in member can do". A leaked `INGEST_USER_PASSWORD` gives away one member account; the service role key would give away every row with RLS off, and `auth.uid()` would be null so `audit_log.changed_by` would record nobody — on the table whose whole purpose is who changed what |
+| **`profiles.is_service`, rather than deactivating it** | `is_member()` requires `is_active`, so a deactivated machine account cannot write at all. Three edits keep it out of every owner picker: `reference.ts:getOwners()`, `opportunities/page.tsx`, `admin/import/actions.ts`. The **"logged by" filter on `/activity` is deliberately left alone** — filtering the feed to *Nightly ingest* is how you audit a bad night |
+| **Three tiers, and only two of them ever write** | `exact` (an address equals exactly one live contact) applies the link. `domain` (the domain maps to exactly one account) applies **the account and nothing else** — which building or which deal is a guess even when the company is certain. `inferred` never applies |
+| **Two live contacts sharing an address means *no* link, not the first one** | `contacts_email_idx` is on `lower(email)`, is not unique and has no `deleted_at` clause. The lookup filters deleted rows itself and counts the results |
+| **`unique(domain)` on `account_domains`** | "Exactly one account or nothing", enforced by the constraint rather than counted at 3am. The consequence is real and worth stating: `cbre.com` and `jll.com` can never be mapped where an agent's buildings sit under separate accounts, so this tier is quietest on the largest relationships |
+| **`next_steps` is its own table, not a flag on `activities`** | Every index on activities is `(something, occurred_at desc)`, so a future-dated row sits at the top of every timeline until the day it happens — and `fetchMyFocus` computes "days quiet" from `max(occurred_at)`, so one meeting booked for Friday would read as "touched today" and drop the account off the follow-up list |
+| **A suggestion is a proposed write: `subject_id` set = patch, null = insert** | Every kind reduces to those two verbs, so `kind` only groups and words the screen rather than forking the code. A fifth kind is free |
+| **Every patch goes through `apply_gap_fill()`** | It already journals each field, refuses anything off the allowlist, never clears with a blank, casts through the column's own type and writes one audit row per record. So a night of accepted suggestions is one `import_batches` row with the Undo button that already existed. **Nothing new was built for undo** |
+| `gap_fill_allows()` gained exactly four pairs | `activities.account_id / building_id / contact_id / opportunity_id`. Not `subject`, `body`, `occurred_at`, `source` or `external_id`: the machine may say what an activity is **about**, never rewrite what it says. Money stays absent, deliberately |
+| **The proposer names `account_id` in the payload itself** | `set_activity_account()` is a BEFORE trigger that fills `account_id` when `building_id` is set, but `apply_gap_fill` journals only the columns *it* wrote — so undo would revert the building and leave the account stamped, a state the row was never in. `db:verify` asserts the trap is real **and** that naming it undoes cleanly, so nobody deletes the workaround as dead code |
+| **`dedupe_key` is unique across every status, rejected included** | Otherwise the job re-proposes the same 113 links every night forever and the screen is unusable inside a month. The payload is hashed into the key, so a genuinely different proposal about the same record still gets through |
+| **`unique nulls not distinct` on the mirror** | `mailbox_id` is null for a Granola note, and by default Postgres treats two nulls as different — so without this every note would re-insert on every run and the mirror would stop being a mirror |
+| **`internetMessageId`, never `message.id`** | Graph's `message.id` **changes when a message moves folder**, so filing an email would re-ingest it as a new activity. Calendar uses `iCalUId`, which is also what Granola reports for the same meeting — that is the join across calendar → note → activity |
+| **The unknown-sender tray is a mirror row, not a table** | `status = 'ignored'`, empty subject, null snippet, one participant. The promise about scope was "address, domain, count and last-seen — no subject, no body", and this is that promise expressed as data rather than as a comment. A sender is cleared from it the moment they become known — on every match, not only a new one, since the message that finally identifies somebody is usually one already in the mirror |
+| **Silence is `v_quiet_accounts`, not suggestion rows** | Same rule as the win rate and the gap census: a stored "this account has gone quiet" row is wrong the second somebody logs a call, and would need a job to unstale it |
+| **The review queue says when it is showing only some** | 114 waiting, 100 rendered. A page that implies it is showing everything is the silent-cap mistake, and this app's whole trust model is totals that admit their own gaps |
+| **`vercel.json` runs at 07:00 and 09:00 UTC** | Which is 03:00 and 05:00 in Boston in summer, 02:00 and 04:00 in winter — Vercel cron is UTC and offers no alternative, so it appears to move twice a year. Explained in the route file, because `vercel.json` is strict JSON and cannot carry a comment. The second pass is a drain, not a duplicate: state is per item in the database, so a deadline stop is a pause. A self-invoking route would be a recursion bug and a billing incident |
+| **The route returns 200 even when items failed** | Vercel retries a failed cron, and a retry storm against a throttled Graph is worse than waiting a day. A failure to *sign in* is different — nothing ran and it will not fix itself — so that one returns 500 and shows up red |
+
+### The relink: what it actually found
+
+The plan was to re-point the 374 orphan activities at their **accounts**, and the dry run killed
+that idea outright: **0 of 374** resolve to an account. The ones that were going to match already
+did, during the original import.
+
+What they are instead is **deals** — "Jumbo Capital", "HTA REIT — 851 Middle St Fall River",
+"Boston Children's Hospital — RFP via Premier (GPO)". **113 of the 374 are an exact match on an
+opportunity's name**, measured against the real database with zero ambiguous cases.
+
+That matters more than 113 suggests. **Not one of the 667 activities carried an `opportunity_id`**,
+which is exactly why no report can say whether a deal has gone quiet, and why `my-focus.ts` ranks
+by stage instead of by anything activity-based. This is where that number stops being zero.
+
+How it works: `commitActivities` read the Company column for the preview and then wrote only
+`account_id` and `building_id`, so the company string survives **only in the workbook**. Upload
+`Beales_CRM.xlsx` at `/admin/ingest` and each sheet row is keyed back to its activity on
+`(subject, occurred_at)` — measured at **667 of 667 matching exactly one activity, none matching
+two**, which is what makes it a join rather than a guess. It writes suggestions, so it needed none
+of the five-place importer framework: the review screen is the preview and accepting is what
+creates the undoable batch.
+
+The 261 left over are genuinely a person's job — vendors (`CleanSmarts`), variant spellings
+(`HTA REIT / Healthcare Realty — 851 Middle St, Fall River MA`), and `Internal` /
+`General / Unmatched`.
+
+### Where things live
+
+| File | Job |
+|---|---|
+| `supabase/migrations/20260818090000_ingest.sql` | `profiles.is_service`, `account_domains`, `is_public_email_domain()`, `next_steps` + its account trigger, `ingested_items`, `ingest_suggestions`, four new `gap_fill_allows` pairs, `v_quiet_accounts`, `v_domain_candidates` |
+| `src/lib/supabase/ingest.ts` | Signs in as the machine account. Plain `createClient`, **not** `@supabase/ssr` — a cron run has no cookie jar |
+| `src/lib/ingest/addresses.ts` | Address parsing, the freemail list and the role-address list. **The freemail list is duplicated in SQL** as `is_public_email_domain()`, because `v_domain_candidates` needs it and a view cannot call TypeScript — `db:verify` asserts the two agree |
+| `src/lib/ingest/match.ts` | The three tiers, `creditTo()` and `directionOf()` |
+| `src/lib/ingest/suggestions.ts` | `dedupeKey()`, `propose()`, `acceptSuggestions()`, `rejectSuggestions()` |
+| `src/lib/ingest/run.ts` | `runIngest()` — fetch, match, write, with a wall-clock deadline |
+| `src/lib/ingest/fixtures.ts` | The stand-in source. Exports the **same `SourceFetch` shape** `graph.ts` will, so 7b changes one line in the route. Its addresses are `.invalid` on purpose, so a fixture run against production creates nothing |
+| `src/lib/ingest/{review,next-steps}.ts` | The fetchers, page-and-route pattern. `fetchTodaysMeetings()` returns **Meetings Today and Client Matches from one query** — they were never two things |
+| `src/lib/import/relink.ts` | The workbook re-match |
+| `src/app/api/cron/ingest/route.ts` | `maxDuration = 800`, constant-time `CRON_SECRET` check |
+| `src/app/(app)/review/*` | The queue, with bulk apply and dismiss |
+| `src/app/(app)/admin/ingest/*` | Source health, the domain map with candidates, and the relink upload |
+
+`db:verify` grew from 118 to **157 checks**.
+
+### Tested end to end, 2026-08-17
+
+Under a temporary admin login (`qa-phase7@bealesllc.com`, now **deactivated, do not delete** — it
+holds the audit rows). Proved, in this order:
+
+- `/api/cron/ingest` returns **401 without the secret** and is **not** redirected to `/login`.
+- With the secret and nothing mapped, the fixtures ingest **nothing** — 4 seen, 0 written — because
+  no address matches anything real. The scope rule holds by default.
+- Against a disposable account with a domain mapped: 2 past emails became activities linked to the
+  contact and account; the **future meeting became a `next_step`, not an activity**; the stranger's
+  message produced a row with an **empty subject and a null snippet**, so the privacy promise is
+  visible in the data rather than only in a comment; one `create_contact` suggestion for the cc'd
+  person.
+- A second and third run created **nothing** — 3 already seen.
+- The relink proposed **113** links from the real workbook, matching the dry run exactly.
+- Applying 100 of them moved activities-linked-to-a-deal from **0 to 100** and orphans from 374 to
+  274, as one committed batch with 115 journalled field changes.
+- A field was then **hand-edited** and the batch undone: **99 reverted, 1 skipped**, the hand edit
+  survived, the batch reported *"1 field was changed by hand since this import, so it was left as
+  it is."*, and **no activity was deleted**.
+- Everything was then removed. Final counts are **identical to the start** — accounts 22,
+  buildings 38, contacts 97, opportunities 55, activities 667, contract periods 11, contact links
+  36, building services 31, import batches 7, field changes 15 — orphans back to 374, and **MRR
+  unchanged at $47,148 with coverage still 11 of 38**.
+
+`npm run db:verify` 157/157, `typecheck`, `lint`, and a **cold** `rm -rf .next && npm run build`
+all pass.
+
+### What Ryan has to set up
+
+Nothing below blocked 7a. All of it blocks 7b.
+
+**Microsoft 365 — needs tenant-admin rights, so likely the IT team.** `bealesllc.com` is on
+Exchange Online (verified from public DNS: MX → `bealesllc-com.mail.protection.outlook.com`), so
+**one app registration covers mail and calendar together**.
+
+1. **Entra ID → App registrations → New registration.** Single tenant, no redirect URI. Keep the
+   Application (client) ID and Directory (tenant) ID. Create a client secret and copy its
+   **value** immediately — it is shown once.
+2. **API permissions → Microsoft Graph → Application permissions** (not delegated): `Mail.Read`
+   and `Calendars.Read`. Then **Grant admin consent**. Success looks like the row reading
+   *Granted for Beale's LLC* with a green tick. Without that click the app can do nothing.
+3. **Scope it, or it can read all ~150 mailboxes.** Create a mail-enabled security group
+   `crm-ingest@bealesllc.com` containing Ryan only, then in Exchange Online PowerShell:
+   `New-ApplicationAccessPolicy -AppId <client-id> -PolicyScopeGroupId crm-ingest@bealesllc.com -AccessRight RestrictAccess -Description "Beale's CRM nightly ingest"`.
+   Success is `Test-ApplicationAccessPolicy -Identity ryan@bealesllc.com -AppId <client-id>`
+   returning **Granted** and any other mailbox returning **Denied**. Propagation can take over an
+   hour, so a wrong Denied is usually just impatience. Adding the other four later is adding them
+   to this group — nothing else changes.
+
+**Granola** (Ryan is on Business, confirmed): generate an API key in the desktop app. It starts
+`grn_` and is read-only. The public API is `https://public-api.granola.ai/v1` — `GET /v1/notes`
+(filters `created_after` / `updated_after`, page size max 30, cursor pagination),
+`GET /v1/notes/{id}` (`summary_markdown`, attendees, the calendar event, `include=transcript`),
+`GET /v1/folders`. Rate limit 25 requests per 5 seconds burst, 5/second sustained.
+
+**Then 3–4 real samples before any parser is written** — one inbound client email, one outbound,
+one calendar event with external attendees, one Granola note. Same rule as the payroll parser.
+
+**Vercel environment variables** (Production): `INGEST_USER_EMAIL`, `INGEST_USER_PASSWORD`,
+`CRON_SECRET`, then `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`,
+`GRANOLA_API_KEY`. The ingest password was printed by `npm run user:create` when the account was
+made and is also in `.env.local`. **Confirm Fluid Compute is on** for the project, or Pro caps
+functions at 300s rather than the 800s the route asks for.
 
 ### The gap census — now a view, not a hand count
 
@@ -342,12 +514,17 @@ shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`)
 `npm run db:check-remote` confirms against the live database that a stranger holding the
 public key can read and write nothing.
 
-**Accounts:** all five are created and active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
-Victor Melo. Earlier versions of this file said only Ryan's existed; that was stale. Brendan
-Mulligan is a sixth profile, deactivated. There is also a seventh, `qa-phase5@bealesllc.com`,
-and an eighth, `qa-phase5b@bealesllc.com` — both **deactivated, do not delete**. They hold the
-audit rows for the 91 Longwater Drive contract correction and for the Phase 5b gap-fill testing,
-and removing either profile would erase who made those changes.
+**Accounts: ten profiles.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob
+Mulligan and Victor Melo. Brendan Mulligan is deactivated. Three QA logins —
+`qa-phase5@`, `qa-phase5b@` and `qa-phase7@` — are **deactivated, do not delete**: they hold the
+audit rows for the 91 Longwater Drive correction and for the Phase 5b and 7a testing, and removing
+a profile would erase who made those changes.
+
+The tenth is **`ingest@bealesllc.com`, "Nightly ingest"** — `role = field`, `sees_rates = false`,
+**`is_active = true` and `is_service = true`**. It is active because `is_member()` requires it and
+RLS refuses every write otherwise, which is precisely why it cannot be hidden by deactivating it
+the way Brendan is. `is_service` is what hides it from every owner picker instead. Do not delete
+it and do not deactivate it — deactivating it silently stops the nightly job writing anything.
 
 **Deactivated people are not offered as owners.** The gap-fill sheets export whatever owner a
 record currently has, but only the five *active* profiles can be matched on the way back in — so
@@ -356,7 +533,10 @@ Brendan and the two QA logins can never be assigned to anything new by an import
 **Live at `https://beales-crm.vercel.app`** since 2026-08-13, deployed from GitHub `main`. Two
 environment variables are set on Vercel (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
 and **`SUPABASE_SERVICE_ROLE_KEY` is deliberately not among them** — nothing under `src/` reads it
-and it bypasses every RLS policy. `NEXT_PUBLIC_SITE_URL` is not set either: `siteUrl()` falls back
+and it bypasses every RLS policy. Phase 7a adds `INGEST_USER_EMAIL`, `INGEST_USER_PASSWORD` and
+`CRON_SECRET`, which *do* belong there; the reasoning for why those may go on Vercel and the
+service role key may not is written out in `.env.local.example`, which is where this project keeps
+its security arguments. `NEXT_PUBLIC_SITE_URL` is not set either: `siteUrl()` falls back
 to Vercel's own `VERCEL_PROJECT_PRODUCTION_URL`, so magic links work without anyone typing a
 domain. Set it only if a custom domain arrives.
 
@@ -550,7 +730,8 @@ a contract that ended three months ago for exactly this reason.
 | `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed |
 | `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
 | `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
-| `npx supabase db push` | Applies migrations to the real Supabase project. **All six migrations including `20260817090000_gap_fill.sql` are already applied** — this is a no-op until a new one is written |
+| `npx supabase db push` | Applies migrations to the real Supabase project. **Every migration including `20260818090000_ingest.sql` is already applied** — this is a no-op until a new one is written |
+| `curl -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/ingest` | Runs the nightly job by hand. Returns a JSON summary; without the header it must return **401**, not a redirect |
 | `git push origin main` | **Deploys.** Vercel builds from `main`, so a push is a release |
 
 `.claude/launch.json` tells Claude Code how to start the dev server (`npm run dev`, port 3000).
@@ -724,13 +905,18 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~**Only Ryan and Robert own anything**~~ — buildings, deals and accounts all carry an Owner
       column, matched against the five active people by full name. Assign Jon, Bob and Victor
       something before inviting them, or their first impression is three empty panels.
-- [ ] **374 of the 667 activities are attached to nothing** — no account, building, deal or
-      contact. Deliberately *not* a gap-fill scope: the link is a guess from free text rather than
-      a blank to fill, so it belongs with a re-import of the Activity Log with a link column.
+- [x] ~~**374 of the 667 activities are attached to nothing**~~ — **113 of them are now one click
+      away.** Phase 7a's relink keys the workbook back to each activity on `(subject, occurred_at)`
+      and matches the Company cell against **deal names**, not account names — which is what they
+      turn out to be. Upload `Beales_CRM.xlsx` at `/admin/ingest`, then apply on `/review`.
+      Measured, not estimated: 0 of the 374 resolve to an account, 113 resolve to exactly one deal.
+      **The remaining 261 are still open** and are genuinely a person's job — vendors, variant
+      spellings, and rows filed as `Internal` or `General / Unmatched`.
 - [ ] The `WIN RATE` formula in cell H5 of `0-Dashboard` — its 86% matches none of the four
       denominators the data supports. Needed to close the last reconciliation gap.
-- [ ] The rest of the daily briefing (Meetings Today, Client Matches) needs Granola and calendar
-      integrations — Phase 7.
+- [x] ~~The rest of the daily briefing (Meetings Today, Client Matches)~~ — built in 7a as one
+      query, `fetchTodaysMeetings()`, rendered as the *Today* strip on the dashboard. It stays
+      hidden until there is something in it. **It fills up when 7b has calendar credentials.**
 
 **Review when convenient:**
 - [x] ~~`lead_sources` placeholders~~ — replaced 2026-08-13 with the eight real sources from the Source column. The five placeholders are **deactivated, not deleted**, because `lead_source_id` has no ON DELETE.
@@ -744,8 +930,21 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       already recorded in this file (six tiles, pipeline-by-stage, health summary), which Ryan
       confirmed. **The screenshot is still worth having** to check the exact tile definitions
       before the other four people see it, but it is no longer blocking.
-- [ ] Sender email addresses for the weekly payroll emails, plus 3–4 real samples before the parser is written — Phase 7.
-- [ ] InspectQA read-only credentials for `beales-inspections` (`illxdfvqvuwoqwbplgiy`) — Ryan provides at Phase 7. The project is identified; the credentials are not yet issued.
+- [ ] Sender email addresses for the weekly payroll emails, plus 3–4 real samples before the parser is written — now Phase 8.
+- [ ] InspectQA read-only credentials for `beales-inspections` (`illxdfvqvuwoqwbplgiy`) — now Phase 8. The project is identified; the credentials are not yet issued.
+
+**Blocking Phase 7b (Microsoft Graph):**
+- [ ] The Entra app registration — client id, tenant id, client secret. Needs tenant-admin rights, which sit with the IT team.
+- [ ] Admin consent granted for `Mail.Read` and `Calendars.Read` **application** permissions.
+- [ ] The `crm-ingest@bealesllc.com` mail-enabled security group and the `New-ApplicationAccessPolicy` command, or the app can read every mailbox in the tenant. `Test-ApplicationAccessPolicy` must return Granted for Ryan and Denied for anyone else.
+- [ ] **3–4 real samples** — one inbound client email, one outbound, one calendar event with external attendees, one Granola note. No parser gets written before these arrive.
+- [ ] The Vercel environment variables, and Fluid Compute confirmed on.
+- [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
+
+**Opened by Phase 7a:**
+- [ ] `account_domains` is **empty**. The middle confidence tier does nothing until it is filled, and `/admin/ingest` already offers twelve real candidates derived from existing contacts (ciminelli.com, bsci.com, foxrockproperties.com, bidmc.harvard.edu, medtronic.com, rmrgroup.com, and so on). One click each.
+- [ ] The 261 orphan activities the relink could not place. Worth a look at the "what still matches nothing" list before deciding whether they are worth hand-linking at all.
+- [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first.
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
 
 ## Decision log
@@ -797,6 +996,23 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-17 | The gap census is a **view**, and reads `v_mrr_coverage` and `v_pipeline_coverage` rather than recounting | Same rule as win rate: two counts of one number eventually disagree, and the place that must never happen is a screen telling Ryan how wrong his revenue report is. It also means no future session has to count the blanks by hand — every one so far has started by doing exactly that |
 | 2026-08-17 | The preview separates **overwrites** from fills instead of stamping the export with a timestamp | The stale-file problem is real: download Monday, edit until Thursday, and Wednesday's fix in the app gets reverted. The obvious guard — stamp the file and compare — dies on contact with Excel, which reformats `2026-08-17` to `8/17/2026` on save and would then flag every row as changed. Separating "this replaces something that was already there" from "this fills a blank" catches the same problem, needs no extra column, and is what a person actually wants to read |
 | 2026-08-17 | One `gap-fill` importer key carrying a `scope`, not four keys | Four keys would have taken `importer.tsx` to nine parallel preview arrays, nine union members and nine near-identical preview blocks. The four sheets differ only in their field lists, so one key with a scope is one preview component — less code than the five importers that came before it |
+| 2026-08-17 | **Mail, calendar and Granola jump the integration queue, ahead of InspectQA, payroll and Phase 6** | Ryan's call, and both reasons are about the same thing. Activity logging is the habit the whole CRM depends on and nobody is doing it by hand, so the app gets less true every week it waits. And 374 of 667 activities are attached to nothing — the moment to fix how matching works is before more data arrives, not after |
+| 2026-08-17 | **The nightly job signs in as a real Supabase profile, not the service role key** | `.env.local.example` says in capitals not to put that key on Vercel, and the invariant it protects is "the deployed app can never do more than a signed-in member can do". A leaked ingest password gives away one member account; the service role key gives away every row with RLS switched off, and `auth.uid()` would be null so `audit_log.changed_by` would record nobody — on the table whose entire purpose is tracking who changed what. There was already a precedent: the QA logins are non-human profiles too |
+| 2026-08-17 | `profiles.is_service` is a column, not a `user_role` value or a deactivation | `is_member()` requires `is_active`, so a deactivated machine account cannot write at all — "hide it by deactivating" is unavailable. A role value was rejected because `alter type … add value` cannot be used in the transaction that adds it, `is_admin()` branches on role, and role means *permission level* while this means *is a person*. Three edits keep it out of owner pickers; the "logged by" filter on `/activity` deliberately still shows it, because filtering the feed to *Nightly ingest* is how you audit a bad night |
+| 2026-08-17 | **`isPublicPath()` lets `/api/cron/` through** | The proxy matcher covers `/api/*` and Vercel Cron carries no cookie, so every nightly run would have redirected to `/login` and returned a 307 that nothing reads. It would have looked like the job was running for as long as nobody checked. One line, found by reading the proxy rather than by it failing |
+| 2026-08-17 | **A link is applied only on an exact address match; a domain match links the account and nothing else; anything read out of text is never applied** | Three tiers rather than a score, because a number invites "is 0.8 enough?" and nobody can answer that. What actually matters is *what* matched. The domain tier's cost is stated out loud rather than hidden: `cbre.com` and `jll.com` can never be mapped where an agent's buildings sit under separate accounts, so the tier is quietest on the largest relationships in the book |
+| 2026-08-17 | Two live contacts sharing an address means **no** link, not the first one | `contacts_email_idx` is on `lower(email)`, is not unique, and has no `deleted_at` clause. Picking one of two is exactly the guess this phase exists to refuse |
+| 2026-08-17 | **`next_steps` is its own table, not a status column on `activities`** | Every index on activities is `(something, occurred_at desc)`, so a future-dated row would sit at the top of every timeline until the day it happened — and `fetchMyFocus` computes "days quiet" from `max(occurred_at)`, so a meeting booked for Friday would make an account read as touched today and drop off the follow-up list. A status column would also be meaningless on all 667 existing rows and would have to be filtered by every query already written |
+| 2026-08-17 | A suggestion is **a proposed write**: `subject_id` set means patch, null means insert | Four kinds all reduce to those two verbs, so `kind` only groups and words the review screen instead of forking the code — which makes a fifth kind free. `quiet_deal` was considered and rejected as a kind: it has no write to propose, so it is a report, and a stored report is stale the second somebody logs a call. Silence is `v_quiet_accounts`, read when displayed |
+| 2026-08-17 | **Accepting a suggestion goes through `apply_gap_fill()`**, and nothing new was built for undo | It already journals every field, refuses anything off the allowlist, never clears with a blank, casts through the column's own type and writes one audit row per record. So a night of accepted suggestions is one `import_batches` row with the Undo button that has existed since Phase 5b. The allowlist gained exactly four pairs — what an activity is *about*, never what it *says*, and money stays absent |
+| 2026-08-17 | **The proposer names `account_id` in the payload rather than letting the trigger fill it** | `set_activity_account()` is a BEFORE trigger that fills `account_id` when `building_id` is set, but `apply_gap_fill` journals only the columns it wrote itself — so undo would put the building back and leave the account stamped, a state the row was never in. `db:verify` now asserts both that the trap is real and that naming the column undoes cleanly, so a future session cannot remove the workaround thinking it is dead code |
+| 2026-08-17 | **`dedupe_key` is unique across every status, including rejected** | One line of DDL, and it is what decides whether the review screen is usable in month three: without it the job re-proposes the same 113 links every night forever. The payload is hashed into the key, so a genuinely different proposal about the same record still gets through — "no" sticks to *this* proposal, not to the record |
+| 2026-08-17 | Email bodies pass through the job; they do not land | Ryan's call on scope. Exchange is the mail archive and has retention behind it; a second copy of every client email in Postgres is a liability with no read path, readable in full by four people who were not on the thread. Subject, participants and ~500 characters are enough to review a suggestion against, and a quote stored as evidence is a sentence, not a message |
+| 2026-08-17 | The unknown-sender tray is a **mirror row**, not a table of its own | The promise about scope was "address, domain, count and last-seen — no subject, no body". A row with `status = 'ignored'`, an empty subject and a null snippet *is* that promise, expressed as data rather than as a comment somebody could quietly stop honouring |
+| 2026-08-17 | One email to several colleagues becomes **one** activity | Otherwise a five-way client thread puts five identical rows on one account timeline and inflates every activity count in the app. Credited to the sender when the sender is one of the five, since an outbound email is that person's work |
+| 2026-08-17 | **The relink matches orphan activities to deals, not accounts** | The plan said accounts. The data said otherwise: re-running the account matcher over the 374 resolves **zero**, because the ones that were going to match already did during the original import. What is left is deals — and 113 of them match an opportunity name exactly, with no ambiguous cases. Not one of the 667 activities carried an `opportunity_id` before this, which is exactly why no report can say a deal has gone quiet and why `my-focus.ts` ranks by stage |
+| 2026-08-17 | The relink writes **suggestions**, so it needed none of the five-place importer framework | Adding a seventh `ImporterKey` would have meant a preview array, a union member, a commit action, a counter and a preview block. Writing suggestions instead means the review screen *is* the preview and accepting is what creates the undoable batch — less code, and the same undo |
+| 2026-08-17 | The fixture source exports the same shape the real connectors will | `graph.ts` and `granola.ts` swap in at one line in the route. That is what let every hard decision — RLS under a machine account, undo through `apply_gap_fill`, dedupe, idempotency, the privacy rule — be proved against the real database before a single credential existed. Its addresses are `.invalid`, so a fixture run against production creates nothing |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->

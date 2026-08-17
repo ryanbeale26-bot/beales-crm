@@ -14,6 +14,11 @@
  *               left: their name still displays on records they used to own,
  *               instead of the app showing a blank owner
  *   --password  set one explicitly; otherwise a strong one is generated and printed
+ *   --service   a machine account, not a person — currently the nightly ingest.
+ *               It stays ACTIVE, because RLS refuses every write from an
+ *               inactive profile, so it cannot be hidden the way a departed
+ *               colleague is. This flag hides it instead: it is never offered
+ *               as an owner anywhere in the app
  *
  * This is the ONLY place the service role key is used. That key bypasses all
  * security, so it must never be imported by anything under /src.
@@ -40,12 +45,19 @@ const name = arg('name')
 const role = arg('role') ?? 'leadership'
 const seesRates = process.argv.includes('--rates')
 const inactive = process.argv.includes('--inactive')
+const service = process.argv.includes('--service')
 const password = arg('password') ?? randomBytes(12).toString('base64url')
 
 if (!email) fail('Missing --email')
 if (!name) fail('Missing --name')
 if (!['admin', 'leadership', 'field'].includes(role)) {
   fail(`--role must be admin, leadership or field (got "${role}")`)
+}
+if (service && inactive) {
+  fail('--service and --inactive contradict: RLS refuses every write from an inactive profile.')
+}
+if (service && seesRates) {
+  fail('--service and --rates contradict: a machine account has no business reading pay rates.')
 }
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -87,7 +99,14 @@ if (error) {
 // The profile row is created by a database trigger. Set role and rate access.
 const { error: profileError } = await supabase
   .from('profiles')
-  .update({ full_name: name, email, role, sees_rates: seesRates, is_active: !inactive })
+  .update({
+    full_name: name,
+    email,
+    role,
+    sees_rates: seesRates,
+    is_active: !inactive,
+    is_service: service,
+  })
   .eq('id', userId)
 
 if (profileError) {
@@ -103,6 +122,18 @@ console.log(`  Role: ${role}${seesRates ? ' — can see pay rates and margin' : 
 if (inactive) {
   console.log(`  Inactive: cannot sign in, and sees no data even with a session.`)
   console.log(`  Their name still shows on records they own.\n`)
+  process.exit(0)
+}
+
+if (service) {
+  console.log(`  Machine account: active (RLS needs it), never offered as an owner.`)
+  if (created) {
+    console.log(`\n  Password: ${password}`)
+    console.log(`  Put this in Vercel as INGEST_USER_PASSWORD, and in .env.local`)
+    console.log(`  alongside INGEST_USER_EMAIL=${email}\n`)
+  } else {
+    console.log(`  Password unchanged.\n`)
+  }
   process.exit(0)
 }
 

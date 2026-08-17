@@ -3,12 +3,18 @@ import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 
 /** People who can own a record. Inactive profiles are included so that a record
- *  owned by someone who has left still shows their name rather than a blank. */
+ *  owned by someone who has left still shows their name rather than a blank.
+ *
+ *  Service accounts are not. The nightly ingest has to be an active profile —
+ *  RLS refuses every write otherwise — so it cannot be hidden by deactivating
+ *  it the way a departed colleague is. "Who owns this account" must always
+ *  answer with somebody you can ring. */
 export async function getOwners() {
   const supabase = await createClient()
   const { data } = await supabase
     .from('profiles')
     .select('id, full_name, email, is_active')
+    .eq('is_service', false)
     .order('full_name')
   return data ?? []
 }
