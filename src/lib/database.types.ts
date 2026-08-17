@@ -1289,6 +1289,47 @@ export type Database = {
           },
         ]
       }
+      import_field_changes: {
+        Row: {
+          batch_id: string
+          column_name: string
+          created_at: string
+          id: number
+          new_value: Json
+          old_value: Json
+          record_id: string
+          table_name: string
+        }
+        Insert: {
+          batch_id: string
+          column_name: string
+          created_at?: string
+          id?: never
+          new_value: Json
+          old_value: Json
+          record_id: string
+          table_name: string
+        }
+        Update: {
+          batch_id?: string
+          column_name?: string
+          created_at?: string
+          id?: never
+          new_value?: Json
+          old_value?: Json
+          record_id?: string
+          table_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_field_changes_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       import_row_errors: {
         Row: {
           batch_id: string
@@ -2630,6 +2671,17 @@ export type Database = {
           },
         ]
       }
+      v_gap_census: {
+        Row: {
+          field: string | null
+          label: string | null
+          missing: number | null
+          scope: string | null
+          sort_order: number | null
+          total: number | null
+        }
+        Relationships: []
+      }
       v_mrr_by_month: {
         Row: {
           account_count: number | null
@@ -2966,6 +3018,15 @@ export type Database = {
       }
     }
     Functions: {
+      apply_gap_fill: {
+        Args: {
+          p_batch_id: string
+          p_record_id: string
+          p_table: string
+          p_values: Json
+        }
+        Returns: number
+      }
       can_see_rates: { Args: never; Returns: boolean }
       close_building_contract: {
         Args: { p_building_id: string; p_lost_date?: string }
@@ -2990,8 +3051,26 @@ export type Database = {
         }
         Returns: string
       }
+      fill_building_contract_value: {
+        Args: {
+          p_building_id: string
+          p_effective_date: string
+          p_import_batch_id: string
+          p_monthly_value: number
+        }
+        Returns: string
+      }
+      gap_fill_allows: {
+        Args: { p_column: string; p_table: string }
+        Returns: boolean
+      }
+      gap_fill_column_type: {
+        Args: { p_column: string; p_table: string }
+        Returns: string
+      }
       is_admin: { Args: never; Returns: boolean }
       is_member: { Args: never; Returns: boolean }
+      rollback_field_changes: { Args: { p_batch_id: string }; Returns: Json }
       set_building_monthly_value: {
         Args: {
           p_building_id: string

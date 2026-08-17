@@ -173,32 +173,39 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 3** — Opportunities board, stage history, weighted pipeline, closed-lost capture, closed-won conversion to account + building, pipeline report, admin reference-data editor. Importers for tabs 1 and 5 built and rehearsed; **the real imports are Ryan's to run**
 - [ ] **Phase 4** — Employees, assignments, staff movement history, projects. **Partly built already:** the `employees` / `employee_assignments` schema, the `/employees` list and form, and assigning someone to a building all shipped alongside Phase 1a. What is missing is an employee detail page, the staff-movement report on top of `v_staff_movement`, and projects entirely — `projects` and `project_employees` have a schema, 10 seeded `project_types`, and no screens at all. **Blocked on where employee data comes from:** the workbook has no employee tab and all three tables are empty
 - [x] **Phase 5** — Revenue views in Postgres, dashboard mirroring tab 0, six reports with CSV export, and a correction path that fixes a wrong contract figure without inventing a price change
-- [ ] **Phase 5b** — The gap-filler. Export blanks to CSV → fill in Excel → upload → preview →
-      commit → undo, matching on record **id** rather than fuzzy names. Ryan chose all four
-      scopes: buildings (value, segment, hours, end date), open deals (value, close date,
-      account), contacts (link to account), accounts (primary contact, owner). **This is next.**
-      Every number in the app is understated until it exists — see the gap census below
+- [x] **Phase 5b** — The gap-filler. Download a sheet → fill it in Excel → upload → read every
+      change → commit → undo, matching on record **id**. All four scopes shipped: buildings,
+      open deals, contacts, accounts. The gap census is now a Postgres view on the Import page,
+      so nobody has to count the blanks by hand again. **The data entry itself is Ryan's to do**
 - [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
 - [ ] **Phase 7+** — Integrations, one per phase, in the order above
 
 ## Current status
 
-**Phase:** 5 shipped and **deployed**. The dashboard, six reports and the revenue views are live
-at `https://beales-crm.vercel.app` against real data, and Ryan has signed in. **All five
-spreadsheet tabs are imported** — 22 accounts, 38 buildings, 97 contacts, 667 activities,
-55 opportunities. The Google Sheet is no longer the source of truth for anything the CRM holds.
-**Last session:** 2026-08-13
+**Phase:** 5b shipped. The gap-filler is built, tested end to end against the real database and
+committed; the migration is **already applied** to `beales-crm`. Phases 1–5 are live at
+`https://beales-crm.vercel.app`. **All five spreadsheet tabs are imported** — 22 accounts,
+38 buildings, 97 contacts, 667 activities, 55 opportunities. The Google Sheet is no longer the
+source of truth for anything the CRM holds. **Last session:** 2026-08-17
 
-**Next: Phase 5b, the gap-filler.** The app is now feature-rich and data-poor. Every report opens
-by apologising for its own numbers, which is honest but is not what the other four should meet on
-day one. See the gap census below — that, not new features, is what unlocks the rest.
+**Next: the data entry itself, then Phase 6.** The tool now exists; the blanks are still blank.
+Nothing else in the app gets more truthful until Ryan downloads the four sheets and fills them in.
+Phase 6 (mobile polish, Cmd-K search, audit log, inviting the team) is the next code phase.
 
-Live counts: 5 committed import batches, 8 win reasons (Ryan kept every phrase the Won/Loss
-preview offered), 1 competitor (Janitronics). **`employees`, `employee_assignments` and `projects`
+Live counts: 7 import batches (5 committed spreadsheet imports, plus 2 gap-fill batches from this
+session's testing, both **rolled back** — they are test residue and can be ignored or deleted),
+8 win reasons, 1 competitor (Janitronics). **`employees`, `employee_assignments` and `projects`
 are all still empty** — nothing in the workbook feeds them, which is the first thing Phase 4 has
 to solve.
 
-### The gap census — what Phase 5b has to fix (measured 2026-08-13)
+### The gap census — now a view, not a hand count
+
+`v_gap_census` returns one row per fillable field with how many records are still missing it, and
+it is rendered at the top of `/admin/import`. **Read it there rather than counting by hand.** It
+reads `v_mrr_coverage` and `v_pipeline_coverage` for the two numbers those views already own, so
+it cannot drift from the revenue and pipeline reports.
+
+Measured 2026-08-17, unchanged from 2026-08-13 except where noted:
 
 | Records | Missing |
 |---|---|
@@ -206,15 +213,83 @@ to solve.
 | Buildings with no property type / segment | **38 of 38** |
 | Buildings with no contracted hours | **37 of 38** |
 | Buildings with no contract end date | 30 of 38 |
+| Buildings with no contract **start** date | **27 of 38** — 26 of them are the same 27 with no value |
 | Buildings with no square footage | 25 of 38 |
+| Buildings not health scored | 2 of 38 |
 | Open deals with no monthly value | **28 of 30** |
-| Open deals whose expected close is absent or in the past | **28 of 30** |
+| Open deals whose expected close is absent or in the past | **29 of 30** (was 28; time passed) |
 | Open deals not linked to an account | 28 of 30 |
+| Open deals with no `opened_on` | **30 of 30** — so no sales cycle is measurable on any open deal |
 | Contacts not linked to an account | **63 of 97** |
+| Contacts with no email | **21 of 97** |
+| Contacts with no job title | 22 of 97 (this file previously said 23; 22 is correct) |
 | Accounts with no primary contact | **22 of 22** |
 | Accounts / buildings with no owner | 1 each |
+| Open deals with no owner | **0** — all 30 are owned |
 
-Re-run that census before building anything, since Ryan may have filled some in by hand.
+**The live `property_types` list ends with `Other`, not `Other - Services Vendor`** as recorded
+further up this file. Eleven types, all active.
+
+### What Phase 5b shipped
+
+Round trip: `/admin/import` → *Fill the gaps* → **Download sheet** per scope → edit in Excel →
+upload on the same page → preview → commit → undo from the list at the bottom.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **`import_field_changes`, a per-field before/after journal** | `rollbackImport` undoes a batch by deleting rows stamped with its `import_batch_id`. A gap fill is 100% *updates* to records that already exist, so there is nothing to delete — and stamping a batch id on a building it merely edited would make undo **delete Ryan's real building**. The journal is what makes undo possible at all |
+| `id` is `bigint generated always as identity`, **not** `bigserial` | The grants block gives `authenticated` SELECT on sequences but never USAGE, so a bigserial default fails with "permission denied for sequence" on every insert. `audit_log` already had it right |
+| `old_value` / `new_value` are **NOT NULL** jsonb, with `'null'::jsonb` for empty | `to_jsonb(NULL::date)` is SQL NULL, not jsonb null. A nullable column would make "this field was blank before" indistinguishable from "nothing was recorded", and undo would silently skip every field the gap-filler had filled — the exact case it exists for |
+| Values are extracted with `#>> '{}'`, never `::text` | `to_jsonb` of a uuid, date, text or enum is a *quoted* string, so `::text::uuid` carries the quotes into the cast and fails. `#>> '{}'` unwraps a jsonb scalar to bare text and is the one form that works for uuid, date, numeric, integer, boolean, text **and** the `health_score` enum |
+| Comparison happens **after** casting to the column's own type | jsonb keeps numeric scale: `'2500'::jsonb <> '2500.00'::jsonb`. Comparing what JavaScript sent against what a `numeric(12,2)` column holds would report a change on every money field forever, and would make undo's "has this been edited since?" check fire on all of them |
+| Dynamic SQL only ever sees an **allowlist** | `gap_fill_allows()` is a function, not a table, because reference data is admin-editable at `/admin/reference` and a security boundary must not be. `opportunities.stage_id`, `annual_value`, `profiles.role` and `deleted_at` are all deliberately absent |
+| Undo **does not revert a field edited by hand since the commit** | Anyone can edit a building between the commit and the undo, and the batch filled a blank, so the later hand edit is almost certainly the more considered value. Those fields are left alone, counted, and reported |
+| …and the report is stored on the batch | The list revalidates the instant the undo lands, the Undo button disappears with the batch's status, and the message would go with it. It is written to `import_batches.mapping` (jsonb, and a gap fill has no column mapping to keep) so it survives a refresh |
+| One `UPDATE` per record, not one per field | The audit trigger writes a row per statement, so per-field would put ten audit rows on one building for one import |
+| `fill_building_contract_value()` rather than two PostgREST calls | `set_building_monthly_value()` returns the **existing** period's id unchanged when the value has not moved — and the sheet exports current values, so a re-upload sends the same number straight back. Stamping that returned id would mean undo **deleted a real, pre-existing contract period**, dropping the building to $0 MRR forever with no screen to show it. This refuses unless the building has no period at all, and stamps in the same transaction |
+| A building that already has a value is a **row error**, not a change | A price change and a typo are opposite in the revenue report and identical in a spreadsheet cell. The building form already has the correction checkbox; the importer sends you there rather than guessing |
+| The value's effective date is the row's **contract start date**, else today | Backdating is what makes the MRR history real instead of a step in the month of the import. Contract start is editable in the same row, so filling it in is what unlocks this — and 26 of the 27 unpriced buildings have no start date, so the preview says per building whether the value will read as new business this month or reach back |
+| A blank cell **never** clears a field | There is no way to empty a field through an import at all. That is what makes a half-filled re-upload safe, and it is why an unparseable cell has to be a hard **error** rather than a blank — `parseMoney` and friends return null for both, which is right for a messy spreadsheet and wrong here |
+| Filling day-porter or weekend hours turns their **switch** on | `v_building_hours` gates those hours behind `day_porter` and `weekend_service`, so "8 hours a day" on a building whose flag is false reads as 8 and computes as 0. The flag is set as its own journalled change, so undo puts it back |
+| Scope comes from the file's **first column header**, not a dropdown | This app wrote the sheet, so it can say what it is. A buildings sheet uploaded by mistake is an error rather than a zero-row success |
+| The mapping step is **skipped** for a gap sheet | Offering to remap headers this app just wrote is friction with no upside and one more way to write a segment into an owner field |
+| One `gap-fill` importer key with a `scope`, not four keys | `importer.tsx` already carries five parallel preview arrays and a five-case commit switch. Four more keys would have made it nine of each; one key with a scope is a single preview component for all four sheets |
+| Overwrites are separated from fills in the preview | Filling a blank is always safe; replacing a value that was already there is the line worth reading twice, and it is where a stale download shows up. The obvious alternative — stamping the export and comparing — dies on contact with Excel, which reformats `2026-08-17` to `8/17/2026` on save and would flag every row |
+
+Two latent bugs were fixed on the way past. **`previewImport` and `handleCommit` both ended in a
+bare fall-through to the contacts importer**, so any unrecognised key imported as contacts —
+`previewImport`'s was known, `handleCommit`'s was not, and adding a sixth key would have hit both.
+Both are now exhaustive switches with a `never` assertion, so the *next* importer fails
+`npm run typecheck` rather than at runtime. And **`rollbackImport` only checked the error on the
+last of its five deletes**, so a failure part way through reported success and left a half-undone
+batch; every step is checked now.
+
+`db:verify` grew from 93 to **118 checks**, covering the type round trip through jsonb, the
+hand-edit skip, one audit row per record, the allowlist refusing `stage_id` / `annual_value` /
+`profiles.role` / `deleted_at`, the contract-value refusal, and that undo never deletes the record
+itself.
+
+Where things live:
+
+| File | Job |
+|---|---|
+| `supabase/migrations/20260817090000_gap_fill.sql` | `import_field_changes`, `gap_fill_allows()`, `apply_gap_fill()`, `rollback_field_changes()`, `fill_building_contract_value()`, `v_gap_census` |
+| `src/lib/gaps/index.ts` | `SCOPES`, `ID_HEADERS`, `fetchCensus()`, and the spreadsheet cell formatters |
+| `src/lib/gaps/<scope>.ts` | One `fetchXGaps(supabase)` + `xGapColumns` per scope, the reports pattern exactly |
+| `src/lib/gaps/scope.ts` | `fetchScope()` and `isGapScope()`, kept apart from `index.ts` to avoid an import cycle |
+| `src/lib/import/fill.ts` | The four field specs, three-state parsing, lookup matching, and the proposal builder |
+| `src/app/(app)/admin/import/blanks/[scope]/route.ts` | The download |
+| `src/app/(app)/admin/import/gap-census.tsx` | The *Fill the gaps* section |
+
+**Tested end to end against the real database** on 2026-08-17 under a temporary admin login
+(`qa-phase5b@bealesllc.com`, now **deactivated, do not delete** — it holds the audit rows for the
+test). Filled nine fields on one building and two on another, proved a blanked cell did **not**
+clear an existing health score, proved a building that already had a value was refused, proved a
+bad segment name was refused with the valid list, committed (MRR moved $47,148 → $51,648,
+coverage 11 → 12 of 38), hand-edited a field, undid the batch, and confirmed the hand edit
+survived while everything else reverted. Row counts before and after are **identical** on
+accounts, buildings, contacts, opportunities, activities, contract periods, contact links and
+building services; MRR is back to $47,148. The same round trip was repeated for open deals.
 
 ### The numbers the app currently reports, and what each one is missing
 
@@ -270,8 +345,13 @@ public key can read and write nothing.
 **Accounts:** all five are created and active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
 Victor Melo. Earlier versions of this file said only Ryan's existed; that was stale. Brendan
 Mulligan is a sixth profile, deactivated. There is also a seventh, `qa-phase5@bealesllc.com`,
-**deactivated, do not delete** — it holds the audit row for the 91 Longwater Drive contract
-correction, and removing the profile would erase who made that change.
+and an eighth, `qa-phase5b@bealesllc.com` — both **deactivated, do not delete**. They hold the
+audit rows for the 91 Longwater Drive contract correction and for the Phase 5b gap-fill testing,
+and removing either profile would erase who made those changes.
+
+**Deactivated people are not offered as owners.** The gap-fill sheets export whatever owner a
+record currently has, but only the five *active* profiles can be matched on the way back in — so
+Brendan and the two QA logins can never be assigned to anything new by an import.
 
 **Live at `https://beales-crm.vercel.app`** since 2026-08-13, deployed from GitHub `main`. Two
 environment variables are set on Vercel (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
@@ -470,7 +550,7 @@ a contract that ended three months ago for exactly this reason.
 | `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed |
 | `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
 | `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
-| `npx supabase db push` | Applies migrations to the real Supabase project |
+| `npx supabase db push` | Applies migrations to the real Supabase project. **All six migrations including `20260817090000_gap_fill.sql` are already applied** — this is a no-op until a new one is written |
 | `git push origin main` | **Deploys.** Vercel builds from `main`, so a push is a release |
 
 `.claude/launch.json` tells Claude Code how to start the dev server (`npm run dev`, port 3000).
@@ -628,23 +708,25 @@ build failure that Vercel does not share is almost certainly this.
 - [ ] Does a building ever move between Beale's LLC and AFS? If so, `entity` needs dating the way contract value is.
 - [ ] Can one building ever be billed to two accounts? Assumed no.
 
-**Opened by Phase 5:**
-- [ ] **`property_type_id` is null on all 38 buildings** — segments never came across in the Active
-      Clients import, so revenue-by-segment cannot be built. Needs a re-import of that column or a
-      bulk edit. The pipeline side is fine; opportunities carry it.
+**Opened by Phase 5, and now Ryan's to fill in rather than anyone's to build:**
+
+Phase 5b built the tool for every one of these. They are data entry now, not code — download the
+sheet at the top of `/admin/import`, fill it in, upload it back.
+
+- [x] ~~**`property_type_id` is null on all 38 buildings**~~ — the buildings sheet carries a
+      Segment column and the eleven valid names are listed in the error if one does not match.
+      Still needs doing; revenue-by-segment can be built once it is.
+- [x] ~~**27 of 38 buildings have no contract figure**~~ — the buildings sheet takes a monthly
+      value *and* a contract start date, and backdates the MRR history to it.
+- [x] ~~Only 2 of 30 open deals carry a price~~ / ~~**expected close dates are stale on 28 of
+      30**~~ — both on the open deals sheet, along with `opened_on`, which is null on all 30 and
+      is what makes a sales cycle measurable.
+- [x] ~~**Only Ryan and Robert own anything**~~ — buildings, deals and accounts all carry an Owner
+      column, matched against the five active people by full name. Assign Jon, Bob and Victor
+      something before inviting them, or their first impression is three empty panels.
 - [ ] **374 of the 667 activities are attached to nothing** — no account, building, deal or
-      contact. They came from the Activity Log import and count towards nobody on
-      `/reports/activity`, which says so. Worth deciding whether to re-import with a link column.
-- [ ] **27 of 38 buildings have no contract figure.** Every revenue number is understated until
-      these are filled in. The screens say so, but the fix is data entry, not code.
-- [ ] Only 2 of 30 open deals carry a price, so the weighted pipeline is near-meaningless. Same
-      shape of problem as above.
-- [ ] **Expected close dates are stale on 28 of 30 open deals** — 16 sit in March 2026. The
-      dashboard nudges about it rather than ranking by it. Until they are refreshed, no
-      close-date-driven forecasting is possible.
-- [ ] **Only Ryan and Robert own anything.** Jon Beale, Bob Mulligan and Victor Melo own no deals,
-      accounts or buildings, so their personal dashboard section is empty. Assign owners before
-      inviting them, or their first impression of the CRM is three empty panels.
+      contact. Deliberately *not* a gap-fill scope: the link is a guess from free text rather than
+      a blank to fill, so it belongs with a re-import of the Activity Log with a link column.
 - [ ] The `WIN RATE` formula in cell H5 of `0-Dashboard` — its 86% matches none of the four
       denominators the data supports. Needed to close the last reconciliation gap.
 - [ ] The rest of the daily briefing (Meetings Today, Client Matches) needs Granola and calendar
@@ -707,6 +789,14 @@ build failure that Vercel does not share is almost certainly this.
 | 2026-08-13 | **Top focus and next follow-up are derived, never typed** | The spreadsheet's version was a line Ryan wrote himself each morning. Asking five people who have never used a CRM to maintain a to-do list inside one is how you get a CRM nobody opens — required fields are the enemy, and a required *sentence* is worse. If the data can rank it, the app ranks it |
 | 2026-08-13 | Top focus ranks by **stage**, not by expected close date | The obvious ranking was close date, and the data killed it: only 2 of 30 open deals have one in the future and 16 cluster in a month five months gone, so every row would have read "165 days late" — noise, not a priority. Stage is populated on every deal and genuinely means something, so furthest-along-first is the one honest ranking available. The overdue count is still surfaced, as a nudge to fix the dates rather than as the ordering |
 | 2026-08-13 | The company tiles stayed company-wide, with the personal section **above** them | "The dashboard should be on a per user basis" could have meant filtering all six tiles. It did not: those six mirror tab 0, which Ryan had confirmed minutes earlier, and all five people see all data by design. The personal part is additive — *what needs me* on top, *how are we doing* underneath |
+| 2026-08-17 | **A gap fill is undone by replaying a per-field journal, never by deleting batch-stamped rows** | The whole existing undo model is "delete what carries this batch id". A gap fill only ever *updates* records that already existed, so stamping them would mean undo deleted Ryan's real buildings — the worst bug this app could have. `import_field_changes` records the before and after of every field it touches, and `rollback_field_changes()` puts them back. `commitWonLost` had already met this wall and dodged it by refusing to stamp rows it updated; this is the general answer |
+| 2026-08-17 | Undo **leaves alone** any field edited by hand since the commit, and says how many | Five people can edit a building between the commit and the undo. The batch filled a *blank*, so a later hand edit is almost certainly the more considered value, and silently reverting it would be worse than an incomplete undo. The count is written to the batch rather than only shown on the button, because the list revalidates the moment the undo lands and the button disappears with it |
+| 2026-08-17 | **A blank cell leaves the field alone. There is no way to clear a field through an import at all** | Ryan's call, and the one that makes everything else safe: a half-filled re-upload cannot wipe anything. The consequence is that an unparseable cell has to be a hard error — `parseMoney`, `parseDate` and `parseHealth` return null for both "empty" and "could not read that", which is right for a messy spreadsheet and would here mean a typo silently did nothing. A `CLEAR` sentinel was considered and rejected: a text field whose literal value is "CLEAR" is a footgun nobody needs yet |
+| 2026-08-17 | A contract value from a gap sheet is always the building's **first** period; a building that already has one is refused | A price change and a typo look identical in a spreadsheet cell and mean opposite things in the revenue report. The building form already distinguishes them with a checkbox, so the importer sends you there rather than guessing. It also closes a real trap: `set_building_monthly_value()` returns the *existing* period id when the value has not moved, and the sheet exports current values — so a naive re-upload would have stamped a pre-existing period with the batch id and undo would have deleted it |
+| 2026-08-17 | The value's effective date is the row's **contract start date**, falling back to today | Backdating is what makes the MRR history real rather than one step in the month of the import. 26 of the 27 unpriced buildings have no start date, so the fallback is what most rows would get — which is why contract start is editable in the same sheet, and why the preview says per building whether the value reads as new business this month or reaches back |
+| 2026-08-17 | The gap census is a **view**, and reads `v_mrr_coverage` and `v_pipeline_coverage` rather than recounting | Same rule as win rate: two counts of one number eventually disagree, and the place that must never happen is a screen telling Ryan how wrong his revenue report is. It also means no future session has to count the blanks by hand — every one so far has started by doing exactly that |
+| 2026-08-17 | The preview separates **overwrites** from fills instead of stamping the export with a timestamp | The stale-file problem is real: download Monday, edit until Thursday, and Wednesday's fix in the app gets reverted. The obvious guard — stamp the file and compare — dies on contact with Excel, which reformats `2026-08-17` to `8/17/2026` on save and would then flag every row as changed. Separating "this replaces something that was already there" from "this fills a blank" catches the same problem, needs no extra column, and is what a person actually wants to read |
+| 2026-08-17 | One `gap-fill` importer key carrying a `scope`, not four keys | Four keys would have taken `importer.tsx` to nine parallel preview arrays, nine union members and nine near-identical preview blocks. The four sheets differ only in their field lists, so one key with a scope is one preview component — less code than the five importers that came before it |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->

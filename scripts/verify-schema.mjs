@@ -885,6 +885,307 @@ async function main() {
   check('a deactivated person sees nothing', deactivated.rows[0].n === 0)
 
   // ---------------------------------------------------------------------------
+  console.log('\nGap fill')
+
+  // The section above deactivated Victor to prove a deactivated person sees
+  // nothing. Put him back, because the admin-only checks below need a real
+  // non-admin member.
+  await db.exec(`update profiles set is_active = true where id = '${VICTOR}';`)
+
+  const G = (n) => `dddddddd-0000-4000-8000-00000000f00${n}`
+  const [GAP_ACCOUNT, GAP_BUILDING, GAP_CONTACT, GAP_DEAL, GAP_BATCH] = [1, 2, 3, 4, 5].map(G)
+
+  const openStage = await db.query(
+    `select id from pipeline_stages where not is_won and not is_lost order by sort_order limit 1`,
+  )
+  const segment = await db.query(`select id from property_types order by sort_order limit 1`)
+
+  await db.exec(`
+    insert into accounts (id, name) values ('${GAP_ACCOUNT}', 'Gap Fill Test Co');
+    insert into buildings (id, account_id, name) values ('${GAP_BUILDING}', '${GAP_ACCOUNT}', 'Gap Fill Site');
+    insert into contacts (id, first_name, last_name) values ('${GAP_CONTACT}', 'Gap', 'Tester');
+    insert into opportunities (id, name, stage_id)
+      values ('${GAP_DEAL}', 'Gap Fill Deal', '${openStage.rows[0].id}');
+    insert into import_batches (id, source_tab, file_name, status)
+      values ('${GAP_BATCH}', 'Gap fill · buildings · test.csv', 'test.csv', 'draft');
+  `)
+
+  // --- Every type the allowlist covers, filled from NULL and put back --------
+  // This is the check that catches the ::text::uuid cast family (to_jsonb of a
+  // uuid, date, text or enum is a *quoted* string) and the SQL-NULL-versus-
+  // jsonb-null bug, which would make undo a silent no-op for the one case the
+  // gap-filler exists to serve.
+  const FILL = {
+    property_type_id: segment.rows[0].id, // uuid
+    square_footage: 12000, // integer
+    contract_start_date: '2025-04-01', // date
+    health_score: 'needs_attention', // enum
+    day_porter: true, // boolean
+    night_hours_per_night: 4.5, // numeric(5,2)
+  }
+
+  const applied = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('buildings', $1, $2::jsonb, $3) as n`, [
+      GAP_BUILDING,
+      JSON.stringify(FILL),
+      GAP_BATCH,
+    ]),
+  )
+  check('a gap fill writes every field it was given', applied.rows[0]?.n === 6, JSON.stringify(applied.rows[0]))
+
+  const afterFill = await db.query(
+    `select property_type_id, square_footage, contract_start_date, health_score,
+            day_porter, night_hours_per_night from buildings where id = '${GAP_BUILDING}'`,
+  )
+  check('every type survives the round trip',
+    afterFill.rows[0]?.square_footage === 12000 &&
+    afterFill.rows[0]?.health_score === 'needs_attention' &&
+    afterFill.rows[0]?.day_porter === true &&
+    Number(afterFill.rows[0]?.night_hours_per_night) === 4.5 &&
+    String(afterFill.rows[0]?.property_type_id) === String(segment.rows[0].id),
+    JSON.stringify(afterFill.rows[0]))
+
+  const journal = await db.query(
+    `select count(*)::int as n from import_field_changes where batch_id = '${GAP_BATCH}'`,
+  )
+  check('every change is journalled', journal.rows[0].n === 6, `${journal.rows[0].n} rows`)
+
+  // Five of the six columns were NULL beforehand; day_porter is
+  // `boolean not null default false`, so its old value is legitimately false.
+  // Both must be stored as real jsonb — a SQL NULL here would be
+  // indistinguishable from "nothing was recorded" and undo would skip it.
+  const emptyBefore = await db.query(
+    `select
+       count(*) filter (where old_value = 'null'::jsonb)  as was_empty,
+       count(*) filter (where old_value = 'false'::jsonb) as was_false,
+       count(*) filter (where old_value is null)          as unrecorded
+     from import_field_changes where batch_id = '${GAP_BATCH}'`,
+  )
+  check(
+    'an empty old value is recorded as jsonb null, not SQL NULL',
+    Number(emptyBefore.rows[0].was_empty) === 5 &&
+      Number(emptyBefore.rows[0].was_false) === 1 &&
+      Number(emptyBefore.rows[0].unrecorded) === 0,
+    JSON.stringify(emptyBefore.rows[0]),
+  )
+
+  // --- Re-sending the same values is not a change ---------------------------
+  // The CSV exports current values, so a re-upload sends them straight back.
+  // If that registered as a change, every re-upload would journal the whole
+  // portfolio and money fields would compare unequal forever on numeric scale.
+  const resent = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('buildings', $1, $2::jsonb, $3) as n`, [
+      GAP_BUILDING,
+      JSON.stringify(FILL),
+      GAP_BATCH,
+    ]),
+  )
+  check('re-sending the same values changes nothing', resent.rows[0]?.n === 0, JSON.stringify(resent.rows[0]))
+
+  const scale = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('opportunities', $1, $2::jsonb, $3) as n`, [
+      GAP_DEAL,
+      JSON.stringify({ monthly_value: 2500 }),
+      GAP_BATCH,
+    ]),
+  )
+  const scaleAgain = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('opportunities', $1, $2::jsonb, $3) as n`, [
+      GAP_DEAL,
+      JSON.stringify({ monthly_value: 2500 }),
+      GAP_BATCH,
+    ]),
+  )
+  check(
+    'numeric scale does not invent a change (2500 vs 2500.00)',
+    scale.rows[0]?.n === 1 && scaleAgain.rows[0]?.n === 0,
+    `${scale.rows[0]?.n} then ${scaleAgain.rows[0]?.n}`,
+  )
+
+  // --- A blank cell leaves the field alone ----------------------------------
+  const blanked = await asUser(db, RYAN, () =>
+    db.query(`select public.apply_gap_fill('buildings', $1, $2::jsonb, $3) as n`, [
+      GAP_BUILDING,
+      JSON.stringify({ square_footage: null, health_score: null }),
+      GAP_BATCH,
+    ]),
+  )
+  const notCleared = await db.query(
+    `select square_footage, health_score from buildings where id = '${GAP_BUILDING}'`,
+  )
+  check(
+    'a blank cell never clears a field',
+    blanked.rows[0]?.n === 0 && notCleared.rows[0]?.square_footage === 12000,
+    JSON.stringify(notCleared.rows[0]),
+  )
+
+  // --- One audit row per record, not one per field --------------------------
+  const auditRows = await db.query(
+    `select count(*)::int as n from audit_log
+     where table_name = 'buildings' and record_id = '${GAP_BUILDING}' and action = 'update'`,
+  )
+  check(
+    'filling six fields writes one audit row, not six',
+    auditRows.rows[0].n === 1,
+    `${auditRows.rows[0].n} rows`,
+  )
+
+  // --- The allowlist cannot be escaped --------------------------------------
+  for (const [table, column] of [
+    ['opportunities', 'stage_id'],
+    ['opportunities', 'annual_value'],
+    ['profiles', 'role'],
+    ['buildings', 'deleted_at'],
+  ]) {
+    const refused = await asUser(db, RYAN, () =>
+      db
+        .query(`select public.apply_gap_fill($1, $2, $3::jsonb, $4) as n`, [
+          table,
+          table === 'profiles' ? RYAN : GAP_DEAL,
+          JSON.stringify({ [column]: table === 'profiles' ? 'admin' : '2026-01-01' }),
+          GAP_BATCH,
+        ])
+        .then(() => false)
+        .catch(() => true),
+    )
+    check(`a gap fill refuses ${table}.${column}`, refused)
+  }
+
+  const stageEventsAfter = await db.query(
+    `select count(*)::int as n from opportunity_stage_events where opportunity_id = '${GAP_DEAL}'`,
+  )
+  const closeDate = await db.query(
+    `select actual_close_date from opportunities where id = '${GAP_DEAL}'`,
+  )
+  check(
+    'filling a deal never touches the stage machinery',
+    stageEventsAfter.rows[0].n === 1 && closeDate.rows[0].actual_close_date === null,
+    `${stageEventsAfter.rows[0].n} stage events`,
+  )
+
+  // --- Contract values ------------------------------------------------------
+  const coverageBefore = await db.query(`select buildings_with_value from v_mrr_coverage`)
+
+  await asUser(db, RYAN, () =>
+    db.query(`select public.fill_building_contract_value($1, 3200, $2::date, $3)`, [
+      GAP_BUILDING,
+      '2025-04-01',
+      GAP_BATCH,
+    ]),
+  )
+  const period = await db.query(
+    `select monthly_value, effective_date, change_reason, import_batch_id
+     from building_contract_periods where building_id = '${GAP_BUILDING}'`,
+  )
+  check(
+    'a filled contract value opens one period, stamped and dated',
+    period.rows.length === 1 &&
+      Number(period.rows[0].monthly_value) === 3200 &&
+      period.rows[0].change_reason === 'initial' &&
+      String(period.rows[0].import_batch_id) === GAP_BATCH,
+    JSON.stringify(period.rows),
+  )
+
+  const coverageAfter = await db.query(`select buildings_with_value from v_mrr_coverage`)
+  check(
+    'coverage counts the newly priced building',
+    Number(coverageAfter.rows[0].buildings_with_value) ===
+      Number(coverageBefore.rows[0].buildings_with_value) + 1,
+  )
+
+  // The trap this closes: set_building_monthly_value() returns the *existing*
+  // period id when the value has not moved, so a naive re-upload would stamp a
+  // real pre-existing period and undo would delete it — $0 MRR forever.
+  const secondFill = await asUser(db, RYAN, () =>
+    db
+      .query(`select public.fill_building_contract_value($1, 3200, $2::date, $3)`, [
+        GAP_BUILDING,
+        '2025-04-01',
+        GAP_BATCH,
+      ])
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('filling a value that already exists is refused, not silently re-stamped', secondFill)
+
+  // --- Undo -----------------------------------------------------------------
+  // Someone edits one of the filled fields by hand before the undo. That edit
+  // must survive: the batch filled a blank, so a later hand edit is the more
+  // considered value.
+  await asUser(db, RYAN, () =>
+    db.query(`update buildings set square_footage = 99999 where id = '${GAP_BUILDING}'`),
+  )
+
+  const undo = await asUser(db, RYAN, () =>
+    db.query(`select public.rollback_field_changes($1) as result`, [GAP_BATCH]),
+  )
+  const result = undo.rows[0].result
+
+  const afterUndo = await db.query(
+    `select property_type_id, square_footage, contract_start_date, health_score,
+            day_porter, night_hours_per_night from buildings where id = '${GAP_BUILDING}'`,
+  )
+  check(
+    'undo puts every untouched field back to empty',
+    afterUndo.rows[0].property_type_id === null &&
+      afterUndo.rows[0].contract_start_date === null &&
+      afterUndo.rows[0].health_score === null &&
+      afterUndo.rows[0].day_porter === false &&
+      afterUndo.rows[0].night_hours_per_night === null,
+    JSON.stringify(afterUndo.rows[0]),
+  )
+  check(
+    'undo leaves a field somebody edited by hand alone',
+    afterUndo.rows[0].square_footage === 99999,
+    `square_footage is ${afterUndo.rows[0].square_footage}`,
+  )
+  check('undo reports what it skipped', Number(result.skipped) === 1, JSON.stringify(result))
+
+  const dealAfterUndo = await db.query(
+    `select monthly_value from opportunities where id = '${GAP_DEAL}'`,
+  )
+  check('undo reaches every scope in the batch', dealAfterUndo.rows[0].monthly_value === null)
+
+  const buildingSurvives = await db.query(
+    `select count(*)::int as n from buildings where id = '${GAP_BUILDING}'`,
+  )
+  check('undo never deletes the record itself', buildingSurvives.rows[0].n === 1)
+
+  // --- Who may do any of this ----------------------------------------------
+  const victorFill = await asUser(db, VICTOR, () =>
+    db
+      .query(`select public.apply_gap_fill('buildings', $1, $2::jsonb, $3) as n`, [
+        GAP_BUILDING,
+        JSON.stringify({ square_footage: 1 }),
+        GAP_BATCH,
+      ])
+      .then(() => false)
+      .catch(() => true),
+  )
+  check('a non-admin cannot run a gap fill', victorFill)
+
+  const victorReads = await asUser(db, VICTOR, () =>
+    db.query(`select count(*)::int as n from import_field_changes`),
+  )
+  check('a member can still read the journal', victorReads.rows[0].n > 0)
+
+  // --- The census -----------------------------------------------------------
+  const census = await asUser(db, RYAN, () => db.query(`select * from v_gap_census`))
+  check('the gap census is readable by a signed-in member', census.rows.length >= 18, `${census.rows.length} rows`)
+
+  const censusValue = census.rows.find((r) => r.scope === 'buildings' && r.field === 'monthly_value')
+  const censusCoverage = await db.query(
+    `select buildings_total, buildings_with_value from v_mrr_coverage`,
+  )
+  check(
+    'the census agrees with v_mrr_coverage rather than counting again',
+    Number(censusValue.missing) ===
+      Number(censusCoverage.rows[0].buildings_total) -
+        Number(censusCoverage.rows[0].buildings_with_value),
+    JSON.stringify(censusValue),
+  )
+
+  // ---------------------------------------------------------------------------
   console.log('\nDemo seed data')
 
   const seedSql = await readFile(

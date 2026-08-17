@@ -3,8 +3,20 @@ import { date } from '@/lib/format'
 import { getCurrentProfile } from '@/lib/reference'
 import { createClient } from '@/lib/supabase/server'
 
+import { GapCensus } from './gap-census'
 import { Importer } from './importer'
 import { UndoButton } from './undo-button'
+
+/**
+ * What an undo left alone, read back off the batch. A gap fill deliberately
+ * does not revert a field somebody edited by hand afterwards, and that has to
+ * still be readable once the Undo button has gone.
+ */
+function undoNote(mapping: unknown): string | null {
+  if (!mapping || typeof mapping !== 'object') return null
+  const undo = (mapping as { undo?: { note?: string | null } }).undo
+  return undo?.note ?? null
+}
 
 export default async function ImportPage() {
   const profile = await getCurrentProfile()
@@ -23,7 +35,7 @@ export default async function ImportPage() {
   const supabase = await createClient()
   const { data: batches } = await supabase
     .from('import_batches')
-    .select('id, source_tab, file_name, row_count, status, created_at, committed_at')
+    .select('id, source_tab, file_name, row_count, status, created_at, committed_at, mapping')
     .order('created_at', { ascending: false })
     .limit(20)
 
@@ -31,9 +43,12 @@ export default async function ImportPage() {
     <div>
       <PageHeader
         title="Import"
-        subtitle="Bring accounts, buildings and contacts across from a spreadsheet. Nothing is written until you have seen the preview."
+        subtitle="Fill in what the spreadsheet never had, or bring new records across. Nothing is written until you have seen the preview, and every import can be undone."
       />
 
+      <GapCensus />
+
+      <SectionTitle>Import a file</SectionTitle>
       <Importer />
 
       <SectionTitle>Previous imports</SectionTitle>
@@ -49,8 +64,13 @@ export default async function ImportPage() {
                 <div className="text-muted-foreground text-xs">
                   {date(batch.created_at)} · {batch.row_count} rows · {batch.status.replace('_', ' ')}
                 </div>
+                {undoNote(batch.mapping) && (
+                  <div className="text-muted-foreground mt-0.5 text-xs">{undoNote(batch.mapping)}</div>
+                )}
               </div>
-              {batch.status === 'committed' && <UndoButton batchId={batch.id} />}
+              {batch.status === 'committed' && (
+                <UndoButton batchId={batch.id} isFill={batch.source_tab.startsWith('Gap fill')} />
+              )}
             </div>
           ))}
         </div>

@@ -11,6 +11,15 @@ import {
 } from '@/lib/import/active-clients'
 import { buildActivitiesProposal, type ProposedActivity } from '@/lib/import/activities'
 import { IMPORTERS, guessMapping, type ImporterKey } from '@/lib/import/definitions'
+import {
+  buildFillProposal,
+  scopeFromHeaders,
+  SCOPE_TABLE,
+  type FillTargets,
+  type ProposedFill,
+} from '@/lib/import/fill'
+import { ID_HEADERS, type GapScope } from '@/lib/gaps'
+import { fetchScope } from '@/lib/gaps/scope'
 import { buildPipelineProposal, type ProposedDeal } from '@/lib/import/pipeline'
 import { buildWonLostProposal, mapLossReason, type ProposedOutcome } from '@/lib/import/won-lost'
 import type { Json } from '@/lib/database.types'
@@ -101,6 +110,87 @@ export type PreviewResult =
   | { ok: true; kind: 'pipeline'; deals: ProposedDeal[]; skipped: SkippedRow[] }
   | { ok: true; kind: 'won-lost'; outcomes: ProposedOutcome[]; skipped: SkippedRow[] }
   | { ok: true; kind: 'activities'; activities: ProposedActivity[]; skipped: SkippedRow[] }
+  | {
+      ok: true
+      kind: 'gap-fill'
+      scope: GapScope
+      fills: ProposedFill[]
+      skipped: SkippedRow[]
+      ignoredColumns: string[]
+      missingColumns: string[]
+    }
+
+/**
+ * Everything the gap-filler needs to turn a spreadsheet cell into a change.
+ *
+ * `current` is the sheet as the download wrote it, keyed by record id — so a
+ * cell Ryan did not touch compares equal and produces no change at all. It is
+ * built from fetchScope(), the same function the download uses, which is the
+ * only way to guarantee the two agree.
+ */
+async function buildFillTargets(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  scope: GapScope,
+): Promise<FillTargets> {
+  const [{ rows, columns }, { data: segments }, { data: profiles }, { data: accounts }, { data: contacts }] =
+    await Promise.all([
+      fetchScope(supabase, scope),
+      supabase.from('property_types').select('id, name').eq('is_active', true),
+      // Active profiles only. Brendan and the QA logins are deactivated and
+      // must never be offered as an owner in an error message.
+      supabase.from('profiles').select('id, full_name').eq('is_active', true),
+      supabase.from('accounts').select('id, name').is('deleted_at', null),
+      supabase.from('contacts').select('id, first_name, last_name, email').is('deleted_at', null),
+    ])
+
+  const current = new Map<string, Record<string, string>>()
+  const labels = new Map<string, string>()
+  const idHeader = ID_HEADERS[scope]
+  const labelHeader = columns[1]?.header ?? idHeader
+
+  for (const row of rows) {
+    const cells: Record<string, string> = {}
+    for (const column of columns) {
+      const value = column.value(row)
+      cells[column.header] = value === null || value === undefined ? '' : String(value)
+    }
+    const id = (cells[idHeader] ?? '').toLowerCase()
+    if (!id) continue
+    current.set(id, cells)
+    labels.set(id, cells[labelHeader] || id)
+  }
+
+  const canFillValue = new Set<string>()
+  const contractStart = new Map<string, string | null>()
+
+  if (scope === 'buildings') {
+    const [{ data: periods }, { data: buildings }] = await Promise.all([
+      supabase.from('building_contract_periods').select('building_id'),
+      supabase.from('buildings').select('id, contract_start_date').is('deleted_at', null),
+    ])
+    const hasPeriod = new Set((periods ?? []).map((p) => String(p.building_id).toLowerCase()))
+    for (const b of buildings ?? []) {
+      const id = String(b.id).toLowerCase()
+      contractStart.set(id, b.contract_start_date)
+      if (!hasPeriod.has(id)) canFillValue.add(id)
+    }
+  }
+
+  return {
+    current,
+    labels,
+    canFillValue,
+    contractStart,
+    segments: (segments ?? []).map((s) => ({ id: s.id, name: s.name })),
+    profiles: (profiles ?? []).map((p) => ({ id: p.id, name: p.full_name })),
+    accounts: (accounts ?? []).map((a) => ({ id: a.id, name: a.name })),
+    contacts: (contacts ?? []).map((c) => ({
+      id: c.id,
+      name: [c.first_name, c.last_name].filter(Boolean).join(' ').trim(),
+      email: c.email ?? '',
+    })),
+  }
+}
 
 /**
  * Step 2 → 3. The file is re-read rather than held in memory between steps:
@@ -124,59 +214,100 @@ export async function previewImport(formData: FormData): Promise<PreviewResult> 
   const supabase = await createClient()
   const { data: profiles } = await supabase.from('profiles').select('id, full_name')
 
-  if (importerKey === 'active-clients') {
-    const { buildings, skipped } = buildActiveClientsProposal(
-      sheet.rows,
-      sheet.rowNumbers,
-      mapping,
-      profiles ?? [],
-    )
-    return { ok: true, kind: 'active-clients', buildings, skipped }
-  }
+  // A switch rather than a chain of ifs. The old chain ended in a bare
+  // fall-through that ran the *contacts* builder for anything it did not
+  // recognise, so a mis-keyed file was silently imported as contacts.
+  switch (importerKey) {
+    case 'active-clients': {
+      const { buildings, skipped } = buildActiveClientsProposal(
+        sheet.rows,
+        sheet.rowNumbers,
+        mapping,
+        profiles ?? [],
+      )
+      return { ok: true, kind: 'active-clients', buildings, skipped }
+    }
 
-  if (importerKey === 'activities') {
-    // Matching happens here, not at commit, so the preview shows exactly which
-    // account and building each row will land on.
-    const [{ data: accounts }, { data: buildings }] = await Promise.all([
-      supabase.from('accounts').select('id, name').is('deleted_at', null),
-      supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
-    ])
-    const { activities, skipped } = buildActivitiesProposal(sheet.rows, sheet.rowNumbers, mapping, {
-      accounts: accounts ?? [],
-      buildings: buildings ?? [],
-    })
-    return { ok: true, kind: 'activities', activities, skipped }
-  }
+    case 'activities': {
+      // Matching happens here, not at commit, so the preview shows exactly which
+      // account and building each row will land on.
+      const [{ data: accounts }, { data: buildings }] = await Promise.all([
+        supabase.from('accounts').select('id, name').is('deleted_at', null),
+        supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
+      ])
+      const { activities, skipped } = buildActivitiesProposal(
+        sheet.rows,
+        sheet.rowNumbers,
+        mapping,
+        { accounts: accounts ?? [], buildings: buildings ?? [] },
+      )
+      return { ok: true, kind: 'activities', activities, skipped }
+    }
 
-  if (importerKey === 'pipeline') {
-    const [{ data: accounts }, { data: buildings }, { data: stages }] = await Promise.all([
-      supabase.from('accounts').select('id, name').is('deleted_at', null),
-      supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
-      supabase.from('pipeline_stages').select('id, name, is_won'),
-    ])
-    const { deals, skipped } = buildPipelineProposal(sheet.rows, sheet.rowNumbers, mapping, {
-      accounts: accounts ?? [],
-      buildings: buildings ?? [],
-      stages: stages ?? [],
-      profiles: profiles ?? [],
-    })
-    return { ok: true, kind: 'pipeline', deals, skipped }
-  }
+    case 'pipeline': {
+      const [{ data: accounts }, { data: buildings }, { data: stages }] = await Promise.all([
+        supabase.from('accounts').select('id, name').is('deleted_at', null),
+        supabase.from('buildings').select('id, name, account_id').is('deleted_at', null),
+        supabase.from('pipeline_stages').select('id, name, is_won'),
+      ])
+      const { deals, skipped } = buildPipelineProposal(sheet.rows, sheet.rowNumbers, mapping, {
+        accounts: accounts ?? [],
+        buildings: buildings ?? [],
+        stages: stages ?? [],
+        profiles: profiles ?? [],
+      })
+      return { ok: true, kind: 'pipeline', deals, skipped }
+    }
 
-  if (importerKey === 'won-lost') {
-    const { data: opportunities } = await supabase
-      .from('opportunities')
-      .select('id, name')
-      .is('deleted_at', null)
-    const { outcomes, skipped } = buildWonLostProposal(sheet.rows, sheet.rowNumbers, mapping, {
-      opportunities: opportunities ?? [],
-    })
-    return { ok: true, kind: 'won-lost', outcomes, skipped }
-  }
+    case 'won-lost': {
+      const { data: opportunities } = await supabase
+        .from('opportunities')
+        .select('id, name')
+        .is('deleted_at', null)
+      const { outcomes, skipped } = buildWonLostProposal(sheet.rows, sheet.rowNumbers, mapping, {
+        opportunities: opportunities ?? [],
+      })
+      return { ok: true, kind: 'won-lost', outcomes, skipped }
+    }
 
-  const { contacts, skipped } = buildContactsProposal(sheet.rows, sheet.rowNumbers, mapping)
-  return { ok: true, kind: 'contacts', contacts, skipped }
+    case 'contacts': {
+      const { contacts, skipped } = buildContactsProposal(sheet.rows, sheet.rowNumbers, mapping)
+      return { ok: true, kind: 'contacts', contacts, skipped }
+    }
+
+    case 'gap-fill': {
+      // The scope comes from the file's own first column, not from a dropdown:
+      // this app wrote the sheet, so it can say what it is, and a buildings
+      // sheet uploaded by mistake should be an error rather than zero rows.
+      const scope = scopeFromHeaders(sheet.headers)
+      if (!scope) {
+        return {
+          ok: false,
+          error: `That does not look like a gap sheet. The first column should be one of ${Object.values(ID_HEADERS).join(', ')} — this one is "${sheet.headers[0] ?? '(empty)'}".`,
+        }
+      }
+
+      const targets = await buildFillTargets(supabase, scope)
+      const { rows, skipped, ignoredColumns, missingColumns } = buildFillProposal(
+        scope,
+        sheet.headers,
+        sheet.rows,
+        sheet.rowNumbers,
+        targets,
+        new Date().toISOString().slice(0, 10),
+      )
+      return { ok: true, kind: 'gap-fill', scope, fills: rows, skipped, ignoredColumns, missingColumns }
+    }
+
+    default: {
+      // ImporterKey is a closed union, so a new importer that forgets a branch
+      // here fails `npm run typecheck` rather than importing as contacts.
+      const never: never = importerKey
+      return { ok: false, error: `Unknown importer: ${String(never)}` }
+    }
+  }
 }
+
 
 export type CommitResult =
   | { ok: false; error: string }
@@ -192,6 +323,14 @@ export type CommitResult =
       dealsCreated: number
       dealsUpdated: number
       errors: number
+      /**
+       * The gap-filler's counters. Optional so the five importers that create
+       * records rather than fill them in do not have to zero-fill three more
+       * fields — the done panel guards every counter with `> 0 &&` anyway.
+       */
+      recordsUpdated?: number
+      fieldsChanged?: number
+      contractValuesSet?: number
     }
 
 /**
@@ -927,31 +1066,226 @@ export async function commitWonLost(payload: {
 }
 
 /**
+ * The gap-filler's commit.
+ *
+ * Unlike the other five this creates nothing. Every field it changes goes
+ * through apply_gap_fill(), which updates the record and journals the before
+ * and after in one transaction — the journal is the only thing that makes undo
+ * possible, since there are no batch-stamped rows to delete.
+ */
+export async function commitFill(payload: {
+  fileName: string
+  scope: GapScope
+  fills: ProposedFill[]
+}): Promise<CommitResult> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can import data.' }
+
+  const table = SCOPE_TABLE[payload.scope]
+  const usable = payload.fills.filter(
+    (f) => !f.error && (f.changes.length > 0 || f.contract !== null),
+  )
+
+  if (usable.length === 0) {
+    return { ok: false, error: 'Nothing in that file would change anything.' }
+  }
+
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .insert({
+      // Named so the Previous imports list tells a gap fill apart from an
+      // import at a glance — the two Undo buttons mean very different things.
+      source_tab: `Gap fill · ${payload.scope} · ${payload.fileName}`,
+      file_name: payload.fileName,
+      mapping: {},
+      row_count: usable.length,
+      status: 'draft',
+      imported_by: userId,
+    })
+    .select('id')
+    .single()
+
+  if (batchError || !batch) {
+    return { ok: false, error: `Could not start the import: ${batchError?.message}` }
+  }
+  const batchId = batch.id
+
+  const rowErrors: { batch_id: string; row_number: number; raw_row: Json; error: string }[] = []
+  for (const fill of payload.fills) {
+    if (fill.error) {
+      rowErrors.push({
+        batch_id: batchId,
+        row_number: fill.rowNumber,
+        raw_row: JSON.parse(JSON.stringify({ id: fill.recordId, label: fill.label })) as Json,
+        error: fill.error,
+      })
+    }
+  }
+
+  let recordsUpdated = 0
+  let fieldsChanged = 0
+  let contractValuesSet = 0
+
+  for (const fill of usable) {
+    if (fill.changes.length > 0) {
+      const values = Object.fromEntries(fill.changes.map((c) => [c.column, c.value]))
+      const { data, error } = await supabase.rpc('apply_gap_fill', {
+        p_table: table,
+        p_record_id: fill.recordId,
+        p_values: values as Json,
+        p_batch_id: batchId,
+      })
+      if (error) {
+        rowErrors.push({
+          batch_id: batchId,
+          row_number: fill.rowNumber,
+          raw_row: JSON.parse(JSON.stringify(values)) as Json,
+          error: `${fill.label}: ${error.message}`,
+        })
+      } else {
+        const changed = Number(data ?? 0)
+        if (changed > 0) recordsUpdated += 1
+        fieldsChanged += changed
+      }
+    }
+
+    if (fill.contract) {
+      const { error } = await supabase.rpc('fill_building_contract_value', {
+        p_building_id: fill.recordId,
+        p_monthly_value: fill.contract.monthlyValue,
+        p_effective_date: fill.contract.effectiveDate,
+        p_import_batch_id: batchId,
+      })
+      if (error) {
+        rowErrors.push({
+          batch_id: batchId,
+          row_number: fill.rowNumber,
+          raw_row: JSON.parse(JSON.stringify(fill.contract)) as Json,
+          error: `${fill.label}: ${error.message}`,
+        })
+      } else {
+        contractValuesSet += 1
+      }
+    }
+  }
+
+  if (rowErrors.length > 0) {
+    await supabase.from('import_row_errors').insert(rowErrors)
+  }
+
+  await supabase
+    .from('import_batches')
+    .update({
+      status: 'committed',
+      committed_at: new Date().toISOString(),
+      row_count: recordsUpdated + contractValuesSet,
+    })
+    .eq('id', batchId)
+
+  revalidateAfterImport()
+
+  return {
+    ok: true,
+    batchId,
+    accountsCreated: 0,
+    accountsReused: 0,
+    buildingsCreated: 0,
+    activitiesCreated: 0,
+    contactsCreated: 0,
+    contactsReused: 0,
+    dealsCreated: 0,
+    dealsUpdated: 0,
+    errors: rowErrors.length,
+    recordsUpdated,
+    fieldsChanged,
+    contractValuesSet,
+  }
+}
+
+/** Everything a commit or an undo can change. */
+function revalidateAfterImport() {
+  for (const path of [
+    '/dashboard',
+    '/accounts',
+    '/buildings',
+    '/contacts',
+    '/opportunities',
+    '/reports',
+    '/admin/import',
+  ]) {
+    revalidatePath(path)
+  }
+}
+
+/**
  * Undo. Deletes only what this batch created — accounts that already existed
  * were reused rather than stamped, so they survive.
  */
-export async function rollbackImport(batchId: string): Promise<{ ok: boolean; error?: string }> {
+export async function rollbackImport(
+  batchId: string,
+): Promise<{ ok: boolean; error?: string; note?: string }> {
   const { supabase, admin } = await requireAdmin()
   if (!admin) return { ok: false, error: 'Only an admin can undo an import.' }
 
-  // Order matters: buildings reference accounts, and contract periods and
-  // contact links cascade from the building. Opportunities go before accounts
-  // too — and note that a deal the Won/Loss import merely UPDATED was never
-  // stamped with a batch id, so it survives, which is the point.
-  await supabase.from('activities').delete().eq('import_batch_id', batchId)
-  await supabase.from('opportunities').delete().eq('import_batch_id', batchId)
-  await supabase.from('buildings').delete().eq('import_batch_id', batchId)
-  await supabase.from('contacts').delete().eq('import_batch_id', batchId)
-  const { error } = await supabase.from('accounts').delete().eq('import_batch_id', batchId)
-  if (error) return { ok: false, error: error.message }
+  // A gap fill changed fields on records that already existed, so there is
+  // nothing stamped to delete. Put the old values back first, before anything
+  // else moves underneath it.
+  const { data: replayed, error: replayError } = await supabase.rpc('rollback_field_changes', {
+    p_batch_id: batchId,
+  })
+  if (replayError) return { ok: false, error: replayError.message }
 
-  await supabase.from('import_batches').update({ status: 'rolled_back' }).eq('id', batchId)
+  // Order matters: buildings reference accounts, and contact links cascade from
+  // the building. Opportunities go before accounts too — and note that a deal
+  // the Won/Loss import merely UPDATED was never stamped with a batch id, so it
+  // survives, which is the point.
+  //
+  // Contract periods are deleted explicitly rather than left to cascade: a gap
+  // fill opens a period on a building it did not create, so there is no
+  // building deletion for it to cascade from. Only a period this batch opened
+  // carries the stamp, and fill_building_contract_value() refuses to stamp one
+  // that already existed.
+  const steps: [string, string][] = [
+    ['activities', 'activities'],
+    ['opportunities', 'deals'],
+    ['building_contract_periods', 'contract values'],
+    ['buildings', 'buildings'],
+    ['contacts', 'contacts'],
+    ['accounts', 'accounts'],
+  ]
 
-  revalidatePath('/accounts')
-  revalidatePath('/buildings')
-  revalidatePath('/contacts')
-  revalidatePath('/opportunities')
+  for (const [table, noun] of steps) {
+    // Every step is checked. Only the last one used to be, so a failure part
+    // way through reported success and left the undo half done.
+    const { error } = await supabase
+      .from(table as 'activities')
+      .delete()
+      .eq('import_batch_id', batchId)
+    if (error) return { ok: false, error: `Could not remove the ${noun}: ${error.message}` }
+  }
+
+  // A field somebody edited by hand since the import is deliberately left as
+  // they edited it. That has to outlive the button that reported it: the list
+  // revalidates the moment the undo lands, the Undo button disappears with the
+  // batch's status, and the message would go with it. So it is stored on the
+  // batch — `mapping` is jsonb and a gap fill has no column mapping to keep.
+  const summary = (replayed ?? {}) as { reverted?: number; skipped?: number }
+  const skipped = Number(summary.skipped ?? 0)
+  const note =
+    skipped > 0
+      ? `${skipped} ${skipped === 1 ? 'field was' : 'fields were'} changed by hand since this import, so ${skipped === 1 ? 'it was' : 'they were'} left as ${skipped === 1 ? 'it is' : 'they are'}.`
+      : undefined
+
+  await supabase
+    .from('import_batches')
+    .update({
+      status: 'rolled_back',
+      mapping: { undo: { reverted: Number(summary.reverted ?? 0), skipped, note: note ?? null } },
+    })
+    .eq('id', batchId)
+
+  revalidateAfterImport()
   revalidatePath('/reports/pipeline')
-  revalidatePath('/admin/import')
-  return { ok: true }
+
+  return { ok: true, note }
 }

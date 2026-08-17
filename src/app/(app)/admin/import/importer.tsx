@@ -7,6 +7,7 @@ import {
   commitActiveClients,
   commitActivities,
   commitContacts,
+  commitFill,
   commitPipeline,
   commitWonLost,
   parseUpload,
@@ -25,7 +26,9 @@ import type { ProposedActivity } from '@/lib/import/activities'
 import type { ProposedDeal } from '@/lib/import/pipeline'
 import type { ProposedOutcome } from '@/lib/import/won-lost'
 import type { ProposedBuilding, ProposedContact, SkippedRow } from '@/lib/import/active-clients'
-import { money } from '@/lib/format'
+import type { ProposedFill } from '@/lib/import/fill'
+import type { GapScope } from '@/lib/gaps'
+import { date, money } from '@/lib/format'
 
 type Step = 'upload' | 'map' | 'preview' | 'done'
 
@@ -38,7 +41,7 @@ export function Importer() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [importerKey, setImporterKey] = useState<ImporterKey>('active-clients')
+  const [importerKey, setImporterKey] = useState<ImporterKey>('gap-fill')
   const [fileName, setFileName] = useState('')
   const [sheets, setSheets] = useState<SheetSummary[]>([])
   const [sheetName, setSheetName] = useState('')
@@ -53,6 +56,10 @@ export function Importer() {
   // is ticked to begin with; unticking one keeps the sentence on the deal but
   // leaves it out of the report's ranking.
   const [keptWinReasons, setKeptWinReasons] = useState<Set<string>>(new Set())
+  const [fills, setFills] = useState<ProposedFill[]>([])
+  const [fillScope, setFillScope] = useState<GapScope>('buildings')
+  const [ignoredColumns, setIgnoredColumns] = useState<string[]>([])
+  const [missingColumns, setMissingColumns] = useState<string[]>([])
   const [skipped, setSkipped] = useState<SkippedRow[]>([])
   const [result, setResult] = useState<CommitResult | null>(null)
 
@@ -74,19 +81,38 @@ export function Importer() {
     setSheets(res.sheets)
     setSheetName(res.selectedSheet)
     setMapping(res.mapping)
+
+    // A gap sheet was written by this app, so its headers are already known.
+    // Offering to remap them would be friction with no upside, and one more way
+    // to write a segment into an owner field.
+    if (IMPORTERS[importerKey].skipMapping) {
+      await runPreview(chosen, res.selectedSheet, res.mapping)
+      return
+    }
     setStep('map')
   }
 
   async function handlePreview() {
     if (!file) return setError('The file was lost — please choose it again.')
+    await runPreview(file, sheetName, mapping)
+  }
 
+  /**
+   * Arguments rather than state, because the skip-mapping path calls this in
+   * the same tick as the setState that would have supplied them.
+   */
+  async function runPreview(
+    useFile: File,
+    useSheet: string,
+    useMapping: Record<string, number>,
+  ) {
     setBusy(true)
     setError(null)
     const formData = new FormData()
-    formData.set('file', file)
+    formData.set('file', useFile)
     formData.set('importer', importerKey)
-    formData.set('sheet', sheetName)
-    formData.set('mapping', JSON.stringify(mapping))
+    formData.set('sheet', useSheet)
+    formData.set('mapping', JSON.stringify(useMapping))
 
     const res: PreviewResult = await previewImport(formData)
     setBusy(false)
@@ -97,6 +123,10 @@ export function Importer() {
     setActivities(res.kind === 'activities' ? res.activities : [])
     setDeals(res.kind === 'pipeline' ? res.deals : [])
     setOutcomes(res.kind === 'won-lost' ? res.outcomes : [])
+    setFills(res.kind === 'gap-fill' ? res.fills : [])
+    setIgnoredColumns(res.kind === 'gap-fill' ? res.ignoredColumns : [])
+    setMissingColumns(res.kind === 'gap-fill' ? res.missingColumns : [])
+    if (res.kind === 'gap-fill') setFillScope(res.scope)
     if (res.kind === 'won-lost') {
       setKeptWinReasons(
         new Set(res.outcomes.map((o) => o.winNotes).filter((n): n is string => Boolean(n))),
@@ -131,8 +161,18 @@ export function Importer() {
           winReasonNames: [...keptWinReasons],
         })
         break
-      default:
+      case 'gap-fill':
+        res = await commitFill({ fileName, scope: fillScope, fills })
+        break
+      case 'contacts':
         res = await commitContacts({ fileName, sheetName, mapping, contacts })
+        break
+      default: {
+        // ImporterKey is a closed union, so a new importer that forgets a
+        // branch fails `npm run typecheck` rather than committing as contacts.
+        const never: never = importerKey
+        throw new Error(`Unknown importer: ${String(never)}`)
+      }
     }
     setBusy(false)
 
@@ -154,7 +194,7 @@ export function Importer() {
 
   return (
     <div>
-      <Steps current={step} />
+      <Steps current={step} skipMapping={def.skipMapping} />
 
       {error && (
         <p className="bg-destructive/10 text-destructive mb-4 rounded-[3px] px-3 py-2 text-sm">
@@ -675,6 +715,19 @@ export function Importer() {
         </div>
       )}
 
+      {step === 'preview' && importerKey === 'gap-fill' && (
+        <GapFillPreview
+          scope={fillScope}
+          fills={fills}
+          skipped={skipped}
+          ignoredColumns={ignoredColumns}
+          missingColumns={missingColumns}
+          busy={busy}
+          onCommit={handleCommit}
+          onBack={() => window.location.reload()}
+        />
+      )}
+
       {step === 'done' && result?.ok && (
         <div className="space-y-4">
           <div className="bg-secondary rounded-[3px] p-4">
@@ -696,15 +749,32 @@ export function Importer() {
               {result.dealsUpdated > 0 && (
                 <li>{result.dealsUpdated} existing deals had their close details filled in</li>
               )}
+              {(result.recordsUpdated ?? 0) > 0 && (
+                <li>
+                  {plural(result.recordsUpdated ?? 0, 'record')} updated,{' '}
+                  {plural(result.fieldsChanged ?? 0, 'field')} filled in
+                </li>
+              )}
+              {(result.contractValuesSet ?? 0) > 0 && (
+                <li>
+                  {result.contractValuesSet}{' '}
+                  {result.contractValuesSet === 1 ? 'contract value' : 'contract values'} set for
+                  the first time
+                </li>
+              )}
               {result.errors > 0 && (
-                <li className="text-destructive">{result.errors} rows failed — see below</li>
+                <li className="text-destructive">
+                  {plural(result.errors, 'row')} failed — see below
+                </li>
               )}
             </ul>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <Button asChild>
-              <Link href="/accounts">See the accounts</Link>
+              <Link href={importerKey === 'gap-fill' ? '/dashboard' : '/accounts'}>
+                {importerKey === 'gap-fill' ? 'See the numbers' : 'See the accounts'}
+              </Link>
             </Button>
             <Button variant="outline" onClick={() => window.location.reload()}>
               Import something else
@@ -712,10 +782,244 @@ export function Importer() {
           </div>
 
           <p className="text-muted-foreground text-sm">
-            Not right? Undo it from the list of imports below — that removes everything this
-            run created, and nothing else.
+            {importerKey === 'gap-fill'
+              ? 'Not right? Undo it from the list below — that puts every field back the way it was, and leaves alone anything edited by hand since.'
+              : 'Not right? Undo it from the list of imports below — that removes everything this run created, and nothing else.'}
           </p>
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The gap-fill preview.
+ *
+ * One line per record per field, because the whole promise of this screen is
+ * that nothing gets committed unread. A change that overwrites something that
+ * was already there is separated out and listed first: filling a blank is
+ * always safe, replacing a value is the line worth reading twice.
+ */
+function GapFillPreview({
+  scope,
+  fills,
+  skipped,
+  ignoredColumns,
+  missingColumns,
+  busy,
+  onCommit,
+  onBack,
+}: {
+  scope: GapScope
+  fills: ProposedFill[]
+  skipped: SkippedRow[]
+  ignoredColumns: string[]
+  missingColumns: string[]
+  busy: boolean
+  onCommit: () => void
+  onBack: () => void
+}) {
+  const failed = fills.filter((f) => f.error)
+  const usable = fills.filter((f) => !f.error && (f.changes.length > 0 || f.contract))
+  const unchanged = fills.filter((f) => !f.error && f.changes.length === 0 && !f.contract)
+
+  const fieldCount = usable.reduce((n, f) => n + f.changes.length, 0)
+  const overwrites = usable.filter((f) => f.changes.some((c) => c.overwrite))
+  const contracts = usable.filter((f) => f.contract)
+  const warned = usable.filter((f) => f.warnings.length > 0)
+
+  const noun = scope === 'deals' ? 'open deals' : scope
+  const singular = { buildings: 'building', deals: 'open deal', contacts: 'contact', accounts: 'account' }[scope]
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-muted rounded-[3px] p-3 text-sm">
+        <p>
+          <strong>{fieldCount}</strong> {fieldCount === 1 ? 'field' : 'fields'} will change across{' '}
+          <strong>{usable.length}</strong> {usable.length === 1 ? singular : noun}.
+          {contracts.length > 0 && (
+            <>
+              {' '}
+              <strong>{contracts.length}</strong>{' '}
+              {contracts.length === 1 ? 'contract value' : 'contract values'} will be set for the
+              first time.
+            </>
+          )}
+        </p>
+        <p className="text-muted-foreground mt-1">
+          {unchanged.length} {unchanged.length === 1 ? 'row is' : 'rows are'} unchanged.
+          {failed.length > 0 && (
+            <>
+              {' '}
+              <span className="text-destructive">
+                {failed.length} {failed.length === 1 ? 'row has' : 'rows have'} a problem and will
+                be skipped.
+              </span>
+            </>
+          )}
+        </p>
+      </div>
+
+      {(ignoredColumns.length > 0 || missingColumns.length > 0) && (
+        <div className="border-border rounded-[3px] border p-3 text-sm">
+          {missingColumns.length > 0 && (
+            <p>
+              This sheet has no <strong>{missingColumns.join(', ')}</strong> column, so{' '}
+              {missingColumns.length === 1 ? 'that field' : 'those fields'} will not be filled in.
+            </p>
+          )}
+          {ignoredColumns.length > 0 && (
+            <p className="text-muted-foreground mt-1">
+              Columns this import does not write: {ignoredColumns.join(', ')}.
+            </p>
+          )}
+        </div>
+      )}
+
+      {failed.length > 0 && (
+        <div>
+          <SectionTitle>Rows that will be skipped</SectionTitle>
+          <div className="border-border border-t">
+            {failed.map((f) => (
+              <div key={f.rowNumber} className="border-border border-b px-2 py-2 text-sm">
+                <span className="text-muted-foreground">Row {f.rowNumber}</span>{' '}
+                <span className="font-medium">{f.label}</span>
+                <div className="text-destructive mt-0.5">{f.error}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {overwrites.length > 0 && (
+        <div>
+          <SectionTitle>Changes to values that are already there</SectionTitle>
+          <p className="text-muted-foreground mb-2 text-sm">
+            These replace something rather than fill a blank. If the sheet is an old download,
+            this is where that shows up — read them before committing.
+          </p>
+          <div className="border-border border-t">
+            {overwrites.map((f) => (
+              <div key={`o-${f.rowNumber}`} className="border-border border-b px-2 py-2 text-sm">
+                <div className="font-medium">{f.label}</div>
+                {f.changes
+                  .filter((c) => c.overwrite)
+                  .map((c) => (
+                    <ChangeLine key={c.column} label={c.label} from={c.from} to={c.to} />
+                  ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {contracts.length > 0 && (
+        <div>
+          <SectionTitle>Contract values</SectionTitle>
+          <p className="text-muted-foreground mb-2 text-sm">
+            Each of these opens the building&rsquo;s first contract period, so it starts counting
+            towards MRR from the date shown. A value that starts today shows in the revenue report
+            as new business this month; one that is backdated fills in the history that was
+            actually there.
+          </p>
+          <div className="border-border border-t">
+            {contracts.map((f) => (
+              <div
+                key={`c-${f.rowNumber}`}
+                className="border-border flex flex-wrap items-baseline justify-between gap-2 border-b px-2 py-2 text-sm"
+              >
+                <span className="font-medium">{f.label}</span>
+                <span className="text-muted-foreground">
+                  {money(f.contract!.monthlyValue)} a month, billing from{' '}
+                  {date(f.contract!.effectiveDate)}
+                  {f.contract!.backdated ? '' : ' — new business this month'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <SectionTitle>Every change</SectionTitle>
+        <div className="border-border border-t">
+          {usable.map((f) => (
+            <div key={f.rowNumber} className="border-border border-b px-2 py-2 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="font-medium">{f.label}</span>
+                <span className="text-muted-foreground text-xs">
+                  row {f.rowNumber} ·{' '}
+                  {f.changes.length + (f.contract ? 1 : 0)}{' '}
+                  {f.changes.length + (f.contract ? 1 : 0) === 1 ? 'change' : 'changes'}
+                </span>
+              </div>
+              {f.contract && (
+                <ChangeLine
+                  label="Monthly value"
+                  from=""
+                  to={`${money(f.contract.monthlyValue)} from ${date(f.contract.effectiveDate)}`}
+                />
+              )}
+              {f.changes.map((c) => (
+                <ChangeLine
+                  key={c.column}
+                  label={c.label}
+                  from={c.from}
+                  to={c.to}
+                  derived={c.derived}
+                />
+              ))}
+              {f.warnings.map((w) => (
+                <div key={w} className="text-muted-foreground mt-0.5 text-xs">
+                  {w}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        {warned.length > 0 && (
+          <p className="text-muted-foreground mt-2 text-xs">
+            {warned.length} {warned.length === 1 ? 'row has' : 'rows have'} a note above — usually
+            an edit to a reference column, which is not saved.
+          </p>
+        )}
+      </div>
+
+      {skipped.length > 0 && <SkippedList skipped={skipped} />}
+
+      <CommitBar busy={busy} onCommit={onCommit} onBack={onBack}>
+        Fill in {fieldCount + contracts.length}{' '}
+        {fieldCount + contracts.length === 1 ? 'field' : 'fields'}
+      </CommitBar>
+    </div>
+  )
+}
+
+/** "1 record" / "2 records", so a summary never reads "1 records updated". */
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+/** was → now, with an empty value shown as a dash rather than nothing. */
+function ChangeLine({
+  label,
+  from,
+  to,
+  derived,
+}: {
+  label: string
+  from: string
+  to: string
+  derived?: boolean
+}) {
+  return (
+    <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 pl-3">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <span className="text-muted-foreground/70 text-xs">{from === '' ? '—' : from}</span>
+      <span className="text-muted-foreground/70 text-xs">&rarr;</span>
+      <span className="text-xs font-medium">{to}</span>
+      {derived && (
+        <span className="text-muted-foreground/70 text-xs">(so the hours actually count)</span>
       )}
     </div>
   )
@@ -762,10 +1066,11 @@ function SkippedList({ skipped }: { skipped: SkippedRow[] }) {
   )
 }
 
-function Steps({ current }: { current: Step }) {
+function Steps({ current, skipMapping }: { current: Step; skipMapping?: boolean }) {
   const steps: { key: Step; label: string }[] = [
     { key: 'upload', label: 'Choose a file' },
-    { key: 'map', label: 'Match columns' },
+    // A gap sheet came from this app, so there is nothing to match.
+    ...(skipMapping ? [] : [{ key: 'map' as Step, label: 'Match columns' }]),
     { key: 'preview', label: 'Check it' },
     { key: 'done', label: 'Done' },
   ]

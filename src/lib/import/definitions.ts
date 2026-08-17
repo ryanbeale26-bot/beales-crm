@@ -12,7 +12,13 @@ export type FieldDef = {
   match: string[]
 }
 
-export type ImporterKey = 'active-clients' | 'contacts' | 'activities' | 'pipeline' | 'won-lost'
+export type ImporterKey =
+  | 'active-clients'
+  | 'contacts'
+  | 'activities'
+  | 'pipeline'
+  | 'won-lost'
+  | 'gap-fill'
 
 export type ImporterDef = {
   key: ImporterKey
@@ -21,9 +27,24 @@ export type ImporterDef = {
   /** Sheet name fragment used to pre-select the right tab. */
   sheetHint: string
   fields: FieldDef[]
+  /**
+   * Skip the column-mapping step. Only for a file this app wrote itself, where
+   * the headers are known exactly — offering to remap them would be friction
+   * with no upside and one more way to write a segment into an owner field.
+   */
+  skipMapping?: boolean
 }
 
 export const IMPORTERS: Record<ImporterKey, ImporterDef> = {
+  'gap-fill': {
+    key: 'gap-fill',
+    label: 'Filled-in gap sheet → update existing records',
+    description:
+      'A sheet downloaded from "Fill the gaps" above, with the blanks filled in. Every row is matched on the ID in the first column, nothing new is created, and a cell you left blank is left alone.',
+    sheetHint: '',
+    fields: [],
+    skipMapping: true,
+  },
   'active-clients': {
     key: 'active-clients',
     label: 'Active Clients → accounts and buildings',
