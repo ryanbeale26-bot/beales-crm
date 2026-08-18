@@ -56,7 +56,7 @@ Not a professional developer. Has shipped one real app (InspectQA) using Claude 
 - **Supabase** — Postgres, Auth, RLS on every table, Storage
 - **Tailwind CSS** + **shadcn/ui**
 - **Recharts**
-- **Vercel** (Ryan has Pro)
+- **Vercel** — the `beales-crm` project is on the **Hobby** plan (verified in the dashboard 2026-08-18, correcting an earlier note in this file that said Pro)
 
 Rules:
 - Secrets in `.env.local` and Vercel env vars only. **The service role key never reaches client-side code.**
@@ -243,8 +243,9 @@ are imported** — 22 accounts, 38 buildings, 97 contacts, 667 activities, 55 op
    and `Calendars.Read`, and the `New-ApplicationAccessPolicy` command that scopes it to a
    mail-enabled security group — see "What Ryan has to set up" below. Then 3–4 real samples
    before a single line of parser is written.
-2. **The Vercel environment variables**, or the cron runs nowhere. Also confirm Fluid Compute is
-   on, or Pro caps the function at 300s instead of 800s.
+2. **The Vercel environment variables**, or the cron runs nowhere. The function is capped at
+   **300s** by the Hobby plan; raising it needs Pro *and* Fluid Compute, and a value above the
+   plan ceiling fails the build rather than the request.
 3. **The gap-fill data entry**, still untouched and still the thing that makes every number in
    the app more truthful.
 4. **Phase 6** — mobile polish, Cmd-K, audit log UI, inviting the team.
@@ -401,8 +402,9 @@ one calendar event with external attendees, one Granola note. Same rule as the p
 **Vercel environment variables** (Production): `INGEST_USER_EMAIL`, `INGEST_USER_PASSWORD`,
 `CRON_SECRET`, then `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`,
 `GRANOLA_API_KEY`. The ingest password was printed by `npm run user:create` when the account was
-made and is also in `.env.local`. **Confirm Fluid Compute is on** for the project, or Pro caps
-functions at 300s rather than the 800s the route asks for.
+made and is also in `.env.local`. **The route asks for `maxDuration = 300`**, the Hobby ceiling.
+It asked for 800 from Phase 7a until 2026-08-18 and Vercel rejected the build outright, which is
+why the 7a commit never deployed. Raising it needs Pro *and* Fluid Compute.
 
 ### The gap census — now a view, not a hand count
 
@@ -836,6 +838,14 @@ in a car park.
 
 ### Gotchas already paid for
 
+**A `maxDuration` above the plan's ceiling fails the BUILD, not the request.** `src/app/api/cron/ingest/route.ts`
+declared 800 — the Pro-with-Fluid-Compute number — while the project runs on Hobby, which allows at
+most 300. Vercel rejects the whole deployment with *"Builder returned invalid maxDuration value"*.
+Two things made it expensive: the failure is at build time so nothing about the route being unused
+protects you, and **a failed build leaves the previous deployment serving happily**, so production
+looks fine while every push silently fails. The Phase 7a commit sat unpushed and undeployed for a
+day because of it. Check the plan before raising it.
+
 **Naming a foreign key in a PostgREST embed.** `contacts` and `accounts` are joined *twice* — `contacts.account_id` and `accounts.primary_contact_id` — so `select('*, account:accounts(...)')` fails with "more than one relationship was found". Write `accounts!contacts_account_id_fkey(...)`. The same applies wherever two tables have two FKs (buildings↔profiles via `owner_id` and `secondary_owner_id`).
 
 **Query errors must not become 404s.** Detail pages check `error` separately from a missing row and throw, because the ambiguous-embed bug above showed up as a bare "page not found" and cost real time. There is an `error.tsx` boundary that prints the message.
@@ -978,7 +988,7 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [ ] Admin consent granted for `Mail.Read` and `Calendars.Read` **application** permissions.
 - [ ] The `crm-ingest@bealesllc.com` mail-enabled security group and the `New-ApplicationAccessPolicy` command, or the app can read every mailbox in the tenant. `Test-ApplicationAccessPolicy` must return Granted for Ryan and Denied for anyone else.
 - [ ] **3–4 real samples** — one inbound client email, one outbound, one calendar event with external attendees, one Granola note. No parser gets written before these arrive.
-- [ ] The Vercel environment variables, and Fluid Compute confirmed on.
+- [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
 
 **Opened by Phase 7a:**

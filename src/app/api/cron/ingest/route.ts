@@ -15,8 +15,17 @@ import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
  * through — without that this route would redirect to /login every night and
  * report success while doing nothing at all.
  *
- * 800 seconds is the Pro ceiling with Fluid Compute enabled (300 without it).
- * The run stops itself 100 seconds short of that, which is the difference
+ * 300 seconds is the ceiling on the Hobby plan this project actually runs on,
+ * and also the Pro ceiling without Fluid Compute. It is NOT a preference: a
+ * build declaring more is REJECTED by Vercel at build time, not at runtime —
+ * "Serverless Functions must have a maxDuration between 1 and 300 for plan
+ * hobby". This file asked for 800 (the Pro-with-Fluid-Compute ceiling) from
+ * Phase 7a until 2026-08-18, which is why the 7a commit never deployed and
+ * every push after it failed the same way while production quietly went on
+ * serving the last green build. Raise it only after confirming the plan the
+ * project is on, and Fluid Compute with it.
+ *
+ * The run stops itself 30 seconds short of the ceiling, which is the difference
  * between a clean pause and a killed function.
  *
  * The schedule is in vercel.json, which is strict JSON and cannot carry a
@@ -30,11 +39,13 @@ import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
  * and a billing incident waiting to happen.
  */
 
-export const maxDuration = 800
+export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
-/** Leave enough room to finish the item in hand and write the summary. */
-const HEADROOM_MS = 100_000
+/** Leave enough room to finish the item in hand and write the summary. Scaled
+ *  down with maxDuration: 100s of headroom out of 300 would spend a third of
+ *  the budget doing nothing. */
+const HEADROOM_MS = 30_000
 
 /** How far back a run looks. The connectors in 7b will hold a real cursor;
  *  until then this only bounds the fixture source. */
