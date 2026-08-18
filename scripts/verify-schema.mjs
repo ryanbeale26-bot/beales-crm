@@ -1559,6 +1559,124 @@ async function main() {
   )
 
   // ---------------------------------------------------------------------------
+  console.log('\nSites: one building, several contracts')
+
+  const SITE = 'aaaa0000-0000-0000-0000-000000005170'
+  const ACC_LL = 'aaaa0000-0000-0000-0000-000000000011'
+  const ACC_TEN = 'aaaa0000-0000-0000-0000-000000000022'
+  const B_LL = 'aaaa0000-0000-0000-0000-0000000000b1'
+  const B_TEN = 'aaaa0000-0000-0000-0000-0000000000b2'
+
+  // The 90 Libbey Pkwy shape: a landlord contract and a tenant contract at one
+  // address, with the money sitting on the wrong one of the two.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into accounts (id, name) values
+      ('${ACC_LL}', 'Landlord Holdings'), ('${ACC_TEN}', 'Tenant Health');
+    insert into sites (id, name, address_line1, city, square_footage)
+      values ('${SITE}', '90 Example Pkwy', '90 Example Pkwy', 'Weymouth', 42000);
+    insert into buildings (id, account_id, name, site_id, tenancy) values
+      ('${B_LL}',  '${ACC_LL}',  'Day porter + nights', '${SITE}', 'landlord'),
+      ('${B_TEN}', '${ACC_TEN}', 'Tenant suite',        '${SITE}', 'tenant');
+    select set_building_monthly_value('${B_LL}', 2100, (current_date - interval '4 months')::date, 'initial');
+  `)
+
+  const shared = await db.query(
+    `select count(*)::int as n from buildings where site_id = '${SITE}' and deleted_at is null`,
+  )
+  check('two contracts can share one physical site', shared.rows[0].n === 2)
+
+  const siteRollup = await db.query(`select * from v_site_contracts where site_id = '${SITE}'`)
+  check('the site rolls up both contracts', Number(siteRollup.rows[0]?.contract_count) === 2)
+  check('it separates landlord from tenant', Number(siteRollup.rows[0]?.landlord_contracts) === 1)
+  check('it counts both customers', Number(siteRollup.rows[0]?.account_count) === 2)
+
+  // The assertion this whole migration exists for. Moving a contract between
+  // two records of the same place must not invent revenue movement — the old
+  // way (close one period, open another) would have written $2,100 of churn
+  // and $2,100 of new business into the same month, permanently.
+  const mrrBefore = await db.query(
+    `select month, mrr::numeric as v from v_mrr_by_month order by month`,
+  )
+  const waterBefore = await db.query(
+    `select coalesce(sum(churn), 0)::numeric as churn, coalesce(sum(new_business), 0)::numeric as nb
+     from v_mrr_waterfall`,
+  )
+
+  const moved = await asUser(db, RYAN, () =>
+    db.query(`select move_contract_periods_to_building('${B_LL}', '${B_TEN}') as n`),
+  )
+  check('the contract period moves', Number(moved.rows[0].n) === 1)
+
+  const onTenant = await db.query(
+    `select count(*)::int as n from building_contract_periods where building_id = '${B_TEN}'`,
+  )
+  check('it now belongs to the tenant contract', onTenant.rows[0].n === 1)
+
+  const mrrAfter = await db.query(
+    `select month, mrr::numeric as v from v_mrr_by_month order by month`,
+  )
+  check(
+    'company MRR is unchanged in every month',
+    JSON.stringify(mrrBefore.rows) === JSON.stringify(mrrAfter.rows),
+  )
+
+  const waterAfter = await db.query(
+    `select coalesce(sum(churn), 0)::numeric as churn, coalesce(sum(new_business), 0)::numeric as nb
+     from v_mrr_waterfall`,
+  )
+  check(
+    'no churn is invented by the move',
+    Number(waterBefore.rows[0].churn) === Number(waterAfter.rows[0].churn),
+  )
+  check(
+    'no new business is invented by the move',
+    Number(waterBefore.rows[0].nb) === Number(waterAfter.rows[0].nb),
+  )
+
+  // Two open periods on one building double-counts it in every MRR view.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    select set_building_monthly_value('${B_LL}', 900, current_date::date, 'initial');
+  `)
+  let refusedDouble = false
+  try {
+    await asUser(db, RYAN, () =>
+      db.query(`select move_contract_periods_to_building('${B_LL}', '${B_TEN}')`),
+    )
+  } catch {
+    refusedDouble = true
+  }
+  check('it refuses to give one building two open periods', refusedDouble)
+
+  let refusedNonAdmin = false
+  try {
+    await asUser(db, VICTOR, () =>
+      db.query(`select move_contract_periods_to_building('${B_LL}', '${B_TEN}')`),
+    )
+  } catch {
+    refusedNonAdmin = true
+  }
+  check('only an admin can move contract history', refusedNonAdmin)
+
+  // A site is a tidy-up-able list. Deleting one must never be able to take a
+  // contract — and the money on it — with it.
+  await db.exec(`set local test.user_id = '${RYAN}'; delete from sites where id = '${SITE}';`)
+  const survived = await db.query(
+    `select count(*)::int as n from buildings where id in ('${B_LL}', '${B_TEN}') and deleted_at is null`,
+  )
+  check('deleting a site does not delete its contracts', survived.rows[0].n === 2)
+  const orphaned = await db.query(
+    `select count(*)::int as n from buildings where id = '${B_LL}' and site_id is null`,
+  )
+  check('their site link is cleared, not cascaded', orphaned.rows[0].n === 1)
+
+  const siteView = await asUser(db, VICTOR, () =>
+    db.query('select count(*)::int as n from v_site_contracts'),
+  )
+  check('authenticated can select v_site_contracts', Number.isInteger(siteView.rows[0].n))
+
+  // ---------------------------------------------------------------------------
   console.log('\nDemo seed data')
 
   const seedSql = await readFile(

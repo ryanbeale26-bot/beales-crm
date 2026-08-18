@@ -13,7 +13,10 @@
  *   --inactive  create the profile but block sign-in. Use for people who have
  *               left: their name still displays on records they used to own,
  *               instead of the app showing a blank owner
- *   --password  set one explicitly; otherwise a strong one is generated and printed
+ *   --password  set one explicitly; otherwise a strong one is generated and printed.
+ *               Works on an account that already exists too — but to change only
+ *               a password, use `npm run user:password` instead, which prompts for
+ *               it rather than taking it from the command line and your shell history
  *   --service   a machine account, not a person — currently the nightly ingest.
  *               It stays ACTIVE, because RLS refuses every write from an
  *               inactive profile, so it cannot be hidden the way a departed
@@ -46,7 +49,8 @@ const role = arg('role') ?? 'leadership'
 const seesRates = process.argv.includes('--rates')
 const inactive = process.argv.includes('--inactive')
 const service = process.argv.includes('--service')
-const password = arg('password') ?? randomBytes(12).toString('base64url')
+const explicitPassword = arg('password')
+const password = explicitPassword ?? randomBytes(12).toString('base64url')
 
 if (!email) fail('Missing --email')
 if (!name) fail('Missing --name')
@@ -94,6 +98,20 @@ if (error) {
   const existing = list.users.find((u) => u.email?.toLowerCase() === email.toLowerCase())
   if (!existing) fail(`Supabase says ${email} exists, but it was not in the user list.`)
   userId = existing.id
+
+  // --password used to be silently ignored on this branch. createUser never
+  // ran, nothing else touched the auth record, and the script still printed
+  // "Updated" — so setting a colleague's password appeared to work and did
+  // nothing. A flag that reports success and changes nothing is worse than one
+  // that errors, and this is the script the whole team gets onboarded with.
+  if (explicitPassword) {
+    const { error: passwordError } = await supabase.auth.admin.updateUserById(userId, {
+      password: explicitPassword,
+    })
+    if (passwordError) {
+      fail(`The account exists but its password could not be set: ${passwordError.message}`)
+    }
+  }
 }
 
 // The profile row is created by a database trigger. Set role and rate access.
@@ -131,6 +149,8 @@ if (service) {
     console.log(`\n  Password: ${password}`)
     console.log(`  Put this in Vercel as INGEST_USER_PASSWORD, and in .env.local`)
     console.log(`  alongside INGEST_USER_EMAIL=${email}\n`)
+  } else if (explicitPassword) {
+    console.log(`  Password updated.\n`)
   } else {
     console.log(`  Password unchanged.\n`)
   }
@@ -141,6 +161,9 @@ if (created) {
   console.log(`  Temporary password: ${password}`)
   console.log(`\n  Send this to them privately. They can also use the`)
   console.log(`  "email me a sign-in link" option instead of a password.\n`)
+} else if (explicitPassword) {
+  console.log(`  Password updated. Send it to them privately.\n`)
 } else {
-  console.log(`  Password unchanged.\n`)
+  console.log(`  Password unchanged.`)
+  console.log(`  To set one: npm run user:password -- --email ${email}\n`)
 }

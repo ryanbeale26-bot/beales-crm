@@ -197,7 +197,36 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7a shipped. The nightly ingest spine is built, tested end to end against the real
+**Phase:** 7a shipped; 7c (Granola) in progress. **Migration `20260819090000_sites.sql` is
+applied** to `beales-crm`, and `/admin/cleanup` is built but **not yet deployed** — it exists only
+on Ryan's laptop until the next push. **Last session:** 2026-08-18.
+
+**What changed on 2026-08-18.** The Granola personal API key is in `.env.local` and reaches **231
+notes** spanning Aug 2025 – Aug 2026, ~25–30 a month. A workspace key was tried first and saw only
+4 notes in a Team Space — a workspace key structurally cannot read private notes, and it fails as a
+200 with plausible-looking data rather than an error. The `sites` table landed, answering the
+one-building-two-accounts question. Two duplicate accounts were merged and archived through the new
+clean-up screen: **Cancer Center → South Shore Health** (44 activities and $6,800 now on
+`Cancer Center - Dana Farber / Brigham (101 Columbian St)`) and **Wound Center → South Shore Health**
+($2,100 and 12 activities on `Wound Center (90 Libbey Pkwy, Weymouth)`). Two new Fox Rock landlord
+contracts were created at 90 and 97 Libbey Pkwy. **MRR is unchanged at $47,148** through all of it,
+verified before and after. Live counts now: **20 accounts, 39 buildings**, 97 contacts, 55
+opportunities, 667 activities, 11 open contract periods.
+
+**Still to do in 7c:** run `npm run sites:backfill` (0 of 39 buildings have a site yet), build the
+alias table, write `granola.ts`, alias `ryanbeale26@gmail.com` to Ryan's profile so notes are
+credited to him rather than to the ingest account, and decide backfill vs forward-only for the 231
+historical notes. Two records are still archivable: a stray `90 Libbey` under South Shore Health
+and `97 Libbey Pkwy, Weymouth` still under `South Coast Dermatology`.
+
+**Also fixed:** the Supabase **Site URL was missing its `https://` scheme**, so every magic link and
+password-recovery link landed on `pjcitahktwnawucoznhk.supabase.co/beales-crm.vercel.app` and died.
+Earlier versions of this file recorded the Site URL as configured — it was, but wrongly, and it
+would have broken the first sign-in for all four remaining colleagues. Defender Safe Links on
+Exchange Online also pre-opens recovery links and burns the one-time token, which is why
+`npm run user:password` exists.
+
+**Previously:** 7a shipped. The nightly ingest spine is built, tested end to end against the real
 database and committed; migration `20260818090000_ingest.sql` is **already applied** to
 `beales-crm`. Phases 1–5b are live at `https://beales-crm.vercel.app`. **All five spreadsheet tabs
 are imported** — 22 accounts, 38 buildings, 97 contacts, 667 activities, 55 opportunities.
@@ -887,7 +916,13 @@ build failure that Vercel does not share is almost certainly this.
 - [ ] Are the sheet's contract values monthly or annual, and do they include project/extra work or only the recurring contract?
 - [ ] Building statuses beyond pending / active / lost — on hold, seasonal, month-to-month?
 - [ ] Does a building ever move between Beale's LLC and AFS? If so, `entity` needs dating the way contract value is.
-- [ ] Can one building ever be billed to two accounts? Assumed no.
+- [x] ~~Can one building ever be billed to two accounts?~~ — **Yes, and it is not an edge
+      case.** Confirmed by Ryan 2026-08-18. Beale's sells to the landlord *and* to that
+      landlord's tenants at the same address: Fox Rock owns 90 Libbey Pkwy and has a day
+      porter + night cleaning contract, while South Shore Health's Wound Center is a
+      tenant in the same building with its own contract. Same shape at 101 Columbian St,
+      which South Shore Health owns with Dana-Farber / Brigham as tenants. Answered with
+      the `sites` table — see the Decision Log.
 
 **Opened by Phase 5, and now Ryan's to fill in rather than anyone's to build:**
 
@@ -1012,6 +1047,11 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-17 | One email to several colleagues becomes **one** activity | Otherwise a five-way client thread puts five identical rows on one account timeline and inflates every activity count in the app. Credited to the sender when the sender is one of the five, since an outbound email is that person's work |
 | 2026-08-17 | **The relink matches orphan activities to deals, not accounts** | The plan said accounts. The data said otherwise: re-running the account matcher over the 374 resolves **zero**, because the ones that were going to match already did during the original import. What is left is deals — and 113 of them match an opportunity name exactly, with no ambiguous cases. Not one of the 667 activities carried an `opportunity_id` before this, which is exactly why no report can say a deal has gone quiet and why `my-focus.ts` ranks by stage |
 | 2026-08-17 | The relink writes **suggestions**, so it needed none of the five-place importer framework | Adding a seventh `ImporterKey` would have meant a preview array, a union member, a commit action, a counter and a preview block. Writing suggestions instead means the review screen *is* the preview and accepting is what creates the undoable batch — less code, and the same undo |
+| 2026-08-18 | **A building is one account's contract at one place; `sites` is the place** | Phase 0 assumed one building, one account, and recorded the doubt as an open question. The answer is yes and it is common — Beale's has contracts with landlords *and* with their tenants at the same address. `buildings` is left exactly as it was, and the physical building becomes its own row that several of them point at. The revenue model is deliberately untouched: three of the records this exists to untangle carried $13,100 of a reported $47,148 MRR between them, so a change that could move the dashboard as a side effect was never worth the elegance. `tenancy` is `landlord`/`tenant` rather than `owner`/`tenant`, because `buildings.owner_id` already means the Beale's person responsible |
+| 2026-08-18 | Consolidating two buildings repoints contract periods, never closes and reopens them | Ending a period on one building and opening it on the other writes churn AND new business into the same month — a contraction and a win that never happened, permanently. `move_contract_periods_to_building()` moves the rows. Three `db:verify` checks assert company MRR is identical in every month afterwards and that neither churn nor new business moved. Same argument as `correct_open_contract_value()`: a correction restates history rather than recording a movement |
+| 2026-08-18 | **The clean-up screen can only ever soft-delete** | `activities.account_id` is `on delete cascade`, so one "Delete row" on a duplicated account in the Supabase table editor would take every activity logged against it — 44 on the Cancer Center account alone — with no undo and no screen to show it. `/admin/cleanup` sets `deleted_at` and nothing else. It also refuses to archive an account that still owns buildings, or a building that still bills, naming the amount: a tidy-up must not be able to change the revenue report |
+| 2026-08-18 | Granola's match signal is the note **title**, not the attendee list | Measured against all 231 real notes: not one carries an external attendee address, because most are solo site inspections dictated into a phone. The participant matcher that mail uses resolves *nothing* on any of them. Titles carry building addresses and deal names instead. Matching is phrase-based, never single-word: a single-token version scored worse (40 clean matches vs 98) and filed a family hospice note under Beth Israel Lahey on the word "Beth". All nine personal notes in the corpus match nothing under the phrase rule, which is the privacy promise proved on real data rather than asserted |
+| 2026-08-18 | `--password` on an existing account was silently doing nothing | `create-user.mjs` fell through to a branch that updated the profile and never touched the auth record, then printed "Password unchanged" — while reporting success. It is the script the whole team gets onboarded with and all four remaining colleagues already have profile rows, so every one of them would have failed quietly. Fixed, and `npm run user:password` added: it prompts with the echo suppressed rather than taking the value as an argument, because arguments land in shell history and in `ps` |
 | 2026-08-17 | The fixture source exports the same shape the real connectors will | `graph.ts` and `granola.ts` swap in at one line in the route. That is what let every hard decision — RLS under a machine account, undo through `apply_gap_fill`, dedupe, idempotency, the privacy rule — be proved against the real database before a single credential existed. Its addresses are `.invalid`, so a fixture run against production creates nothing |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 

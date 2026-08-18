@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:verify": "node scripts/verify-schema.mjs",
     "db:check-remote": "node scripts/check-remote.mjs",
-    "user:create": "node scripts/create-user.mjs"
+    "user:create": "node scripts/create-user.mjs",
+    "sites:backfill": "node scripts/backfill-sites.mjs",
+    "user:password": "node scripts/set-password.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

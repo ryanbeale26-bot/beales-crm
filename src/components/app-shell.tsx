@@ -18,6 +18,7 @@ const NAV = [
   { label: 'Activity', href: '/activity', icon: '≡' },
   { label: 'Reports', href: '/reports', icon: '◱' },
   { label: 'Import', href: '/admin/import', icon: '↥' },
+  { label: 'Clean up', href: '/admin/cleanup', icon: '✕' },
 ]
 
 const LATER = ['Projects']

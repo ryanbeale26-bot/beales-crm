@@ -728,9 +728,11 @@ export type Database = {
           property_type_id: string | null
           scope_notes: string | null
           secondary_owner_id: string | null
+          site_id: string | null
           square_footage: number | null
           state: string | null
           status: Database["public"]["Enums"]["building_status"]
+          tenancy: Database["public"]["Enums"]["building_tenancy"] | null
           updated_at: string
           weekend_hours_per_week: number | null
           weekend_service: boolean
@@ -764,9 +766,11 @@ export type Database = {
           property_type_id?: string | null
           scope_notes?: string | null
           secondary_owner_id?: string | null
+          site_id?: string | null
           square_footage?: number | null
           state?: string | null
           status?: Database["public"]["Enums"]["building_status"]
+          tenancy?: Database["public"]["Enums"]["building_tenancy"] | null
           updated_at?: string
           weekend_hours_per_week?: number | null
           weekend_service?: boolean
@@ -800,9 +804,11 @@ export type Database = {
           property_type_id?: string | null
           scope_notes?: string | null
           secondary_owner_id?: string | null
+          site_id?: string | null
           square_footage?: number | null
           state?: string | null
           status?: Database["public"]["Enums"]["building_status"]
+          tenancy?: Database["public"]["Enums"]["building_tenancy"] | null
           updated_at?: string
           weekend_hours_per_week?: number | null
           weekend_service?: boolean
@@ -891,6 +897,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buildings_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "v_site_contracts"
+            referencedColumns: ["site_id"]
           },
         ]
       }
@@ -2609,6 +2629,54 @@ export type Database = {
         }
         Relationships: []
       }
+      sites: {
+        Row: {
+          address_line1: string | null
+          address_line2: string | null
+          city: string | null
+          created_at: string
+          deleted_at: string | null
+          floors: number | null
+          id: string
+          name: string
+          notes: string | null
+          postal_code: string | null
+          square_footage: number | null
+          state: string | null
+          updated_at: string
+        }
+        Insert: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          created_at?: string
+          deleted_at?: string | null
+          floors?: number | null
+          id?: string
+          name: string
+          notes?: string | null
+          postal_code?: string | null
+          square_footage?: number | null
+          state?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          created_at?: string
+          deleted_at?: string | null
+          floors?: number | null
+          id?: string
+          name?: string
+          notes?: string | null
+          postal_code?: string | null
+          square_footage?: number | null
+          state?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       staffing_report_lines: {
         Row: {
           building_id: string | null
@@ -3433,6 +3501,21 @@ export type Database = {
           },
         ]
       }
+      v_site_contracts: {
+        Row: {
+          account_count: number | null
+          address_line1: string | null
+          city: string | null
+          contract_count: number | null
+          landlord_contracts: number | null
+          monthly_value: number | null
+          site_id: string | null
+          site_name: string | null
+          square_footage: number | null
+          tenant_contracts: number | null
+        }
+        Relationships: []
+      }
       v_staff_movement: {
         Row: {
           employee_id: string | null
@@ -3447,13 +3530,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["to_building_id"]
-            isOneToOne: false
-            referencedRelation: "buildings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "buildings"
@@ -3463,8 +3539,8 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_current_value"
-            referencedColumns: ["building_id"]
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
@@ -3477,7 +3553,7 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_hours"
+            referencedRelation: "v_building_current_value"
             referencedColumns: ["building_id"]
           },
           {
@@ -3490,13 +3566,20 @@ export type Database = {
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["from_building_id"]
+            columns: ["to_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
@@ -3611,6 +3694,10 @@ export type Database = {
       is_admin: { Args: never; Returns: boolean }
       is_member: { Args: never; Returns: boolean }
       is_public_email_domain: { Args: { p_domain: string }; Returns: boolean }
+      move_contract_periods_to_building: {
+        Args: { p_from_building: string; p_to_building: string }
+        Returns: number
+      }
       rollback_field_changes: { Args: { p_batch_id: string }; Returns: Json }
       set_building_monthly_value: {
         Args: {
@@ -3645,6 +3732,7 @@ export type Database = {
       attachment_kind: "before" | "after" | "document" | "photo"
       audit_action: "insert" | "update" | "delete"
       building_status: "pending" | "active" | "lost"
+      building_tenancy: "landlord" | "tenant"
       contract_change_reason:
         | "initial"
         | "increase"
@@ -3830,6 +3918,7 @@ export const Constants = {
       attachment_kind: ["before", "after", "document", "photo"],
       audit_action: ["insert", "update", "delete"],
       building_status: ["pending", "active", "lost"],
+      building_tenancy: ["landlord", "tenant"],
       contract_change_reason: [
         "initial",
         "increase",
