@@ -1,4 +1,6 @@
+import { AliasMap, type Ambiguity, type AliasCandidate, type AliasRow, type TargetOption } from './alias-map'
 import { DomainMap, type Candidate, type DomainRow } from './domain-map'
+import { ProfileAliases, type ProfileAliasRow } from './profile-aliases'
 import { RelinkUpload } from './relink-upload'
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { Stat } from '@/components/report'
@@ -29,12 +31,54 @@ export default async function IngestAdminPage() {
     )
   }
 
-  const [domains, candidates, accounts, mirror, suggestions] = await Promise.all([
+  const [
+    domains,
+    candidates,
+    accounts,
+    mirror,
+    suggestions,
+    aliases,
+    aliasCandidates,
+    buildings,
+    deals,
+    stages,
+    profileAliases,
+    people,
+    ambiguous,
+  ] = await Promise.all([
     supabase.from('account_domains').select('id, domain, account_id, accounts ( name )').order('domain'),
     supabase.from('v_domain_candidates').select('*').order('contact_count', { ascending: false }).limit(12),
     supabase.from('accounts').select('id, name').is('deleted_at', null).order('name'),
     supabase.from('ingested_items').select('status, last_seen_at').order('last_seen_at', { ascending: false }).limit(1000),
     supabase.from('ingest_suggestions').select('status'),
+    supabase
+      .from('match_aliases')
+      // One string literal, not a concatenation: supabase-js parses the select
+      // at the TYPE level, which needs a literal — `'a' + 'b'` widens to string
+      // and every column comes back as GenericStringError.
+      .select('id, alias, note, account_id, building_id, opportunity_id, accounts ( name ), buildings ( name ), opportunities ( name )')
+      .order('alias'),
+    supabase.from('v_alias_candidates').select('*').order('alias').limit(40),
+    supabase.from('buildings').select('id, name').is('deleted_at', null).order('name'),
+    supabase.from('opportunities').select('id, name, stage_id').is('deleted_at', null).order('name'),
+    supabase.from('pipeline_stages').select('id, is_won, is_lost'),
+    supabase
+      .from('profile_email_aliases')
+      .select('id, email, profiles!profile_email_aliases_profile_id_fkey ( full_name )')
+      .order('email'),
+    // Deliberately includes the service profile: an address alias for the
+    // machine account is a legitimate thing to want, and unlike an owner picker
+    // this list is not about assigning work.
+    supabase.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
+    // Titles that named two records. The subject IS kept for these, because the
+    // note is demonstrably about the business — unlike the ones that matched
+    // nothing, where only the id and the date are stored.
+    supabase
+      .from('ingested_items')
+      .select('subject, matched_on, last_seen_at')
+      .eq('status', 'needs_review')
+      .order('last_seen_at', { ascending: false })
+      .limit(30),
   ])
 
   const items = mirror.data ?? []
@@ -63,6 +107,79 @@ export default async function IngestAdminPage() {
           },
         ]
       : [],
+  )
+
+  const aliasRows: AliasRow[] = (aliases.data ?? []).map((row) => ({
+    id: row.id,
+    alias: row.alias,
+    note: row.note,
+    kind: row.opportunity_id ? 'deal' : row.building_id ? 'building' : 'account',
+    label:
+      (row.opportunities as { name: string } | null)?.name ??
+      (row.buildings as { name: string } | null)?.name ??
+      (row.accounts as { name: string } | null)?.name ??
+      'Unknown',
+  }))
+
+  const openStages = new Set(
+    (stages.data ?? []).filter((stage) => !stage.is_won && !stage.is_lost).map((stage) => stage.id),
+  )
+
+  const targets: TargetOption[] = [
+    ...(accounts.data ?? []).map((row) => ({
+      value: `account:${row.id}`,
+      label: row.name,
+      group: 'Accounts' as const,
+    })),
+    ...(buildings.data ?? []).map((row) => ({
+      value: `building:${row.id}`,
+      label: row.name,
+      group: 'Buildings' as const,
+    })),
+    ...(deals.data ?? [])
+      .filter((row) => openStages.has(row.stage_id))
+      .map((row) => ({
+        value: `opportunity:${row.id}`,
+        label: row.name,
+        group: 'Open deals' as const,
+      })),
+  ]
+
+  const aliasCandidateRows: AliasCandidate[] = (aliasCandidates.data ?? []).flatMap((row) => {
+    if (!row.alias) return []
+    const target = row.opportunity_id
+      ? `opportunity:${row.opportunity_id}`
+      : row.building_id
+        ? `building:${row.building_id}`
+        : row.account_id
+          ? `account:${row.account_id}`
+          : null
+    if (!target) return []
+    return [{ alias: row.alias, kind: row.kind ?? '', label: row.label ?? '', target }]
+  })
+
+  const profileAliasRows: ProfileAliasRow[] = (profileAliases.data ?? []).map((row) => ({
+    id: row.id,
+    email: row.email,
+    name: (row.profiles as { full_name: string } | null)?.full_name ?? 'Unknown',
+  }))
+
+  // One row per distinct title: the same note re-seen every night is one thing to
+  // fix, not thirty.
+  const ambiguityRows: Ambiguity[] = Object.values(
+    (ambiguous.data ?? []).reduce<Record<string, Ambiguity>>((acc, row) => {
+      const key = row.subject
+      if (!acc[key]) {
+        acc[key] = {
+          subject: row.subject,
+          matchedOn: row.matched_on,
+          lastSeen: row.last_seen_at,
+          count: 0,
+        }
+      }
+      acc[key].count += 1
+      return acc
+    }, {}),
   )
 
   return (
@@ -115,6 +232,41 @@ export default async function IngestAdminPage() {
         domains={domainRows}
         candidates={candidateRows}
         accounts={accounts.data ?? []}
+      />
+
+      <SectionTitle
+        aside={<span className="text-muted-foreground text-sm">{aliasRows.length} mapped</span>}
+      >
+        What a phrase in a meeting note means
+      </SectionTitle>
+
+      <p className="text-muted-foreground mb-3 text-sm">
+        Granola notes carry no client email addresses — they are mostly solo site inspections
+        dictated into a phone — so they are matched on their <strong>title</strong>. Street
+        addresses and deal names are found automatically. Phrases like{' '}
+        <em>wound center</em> are not a building name, an address or a deal name, so they have to
+        be said once, here. A phrase can mean one record only: one that could mean two means
+        neither. Run <code>npm run granola:probe</code> to see what every note would match, and
+        what still matches nothing.
+      </p>
+
+      <AliasMap
+        aliases={aliasRows}
+        candidates={aliasCandidateRows}
+        targets={targets}
+        ambiguities={ambiguityRows}
+      />
+
+      <SectionTitle>Other addresses that are one of us</SectionTitle>
+      <p className="text-muted-foreground mb-3 text-sm">
+        Granola signs in with a personal address rather than a <code>@bealesllc.com</code> one.
+        Without an entry here, every note it produces is logged by <em>Nightly ingest</em> instead
+        of by the person who captured it, and their own address is treated as a stranger&apos;s.
+      </p>
+
+      <ProfileAliases
+        rows={profileAliasRows}
+        people={(people.data ?? []).map((p) => ({ id: p.id, name: p.full_name }))}
       />
 
       <SectionTitle>Activities that came across attached to nothing</SectionTitle>

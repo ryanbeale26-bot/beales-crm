@@ -184,7 +184,12 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
       needed or used
 - [ ] **Phase 7b** — Microsoft Graph: mail + calendar, delta tokens, the multi-mailbox loop,
       `ingest_runs`. **Blocked on the app registration and 3–4 real samples**
-- [ ] **Phase 7c** — Granola notes, joined to calendar events by `iCalUId`
+- [x] **Phase 7c** — Granola. The title matcher, `match_aliases`, `profile_email_aliases`,
+      `granola.ts`, the admin screens, and the probe/backfill scripts. Shipped and tested end to
+      end against the real database. **Two things are Ryan's to run:** archive the two duplicate
+      records then `npm run sites:backfill --commit`, and `npm run granola:backfill --commit`
+      once he is happy with the alias list. The calendar join key is
+      `calendar_event.calendar_event_id`, **not** `iCalUId` — this account is on Google Calendar
 - [ ] **Phase 7d** — The extraction layer: written commitments as next steps, non-revenue
       gap-fill proposals. Money is never model-proposed
 - [ ] **Phase 8+** — The remaining integrations: InspectQA, then the payroll email ingest
@@ -197,39 +202,119 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7a shipped; 7c (Granola) in progress. **Migration `20260819090000_sites.sql` is
-applied** to `beales-crm`, and `/admin/cleanup` is built but **not yet deployed** — it exists only
-on Ryan's laptop until the next push. **Last session:** 2026-08-18.
+**Phase:** 7c shipped. **Migrations `20260819090000_sites.sql`, `20260820090000_match_aliases.sql`
+and `20260820091000_alias_candidates_distinct.sql` are all applied** to `beales-crm`.
+`/admin/cleanup` is built but **still not deployed** — it exists only on Ryan's laptop until the
+next push. **Last session:** 2026-08-18.
 
-**What changed on 2026-08-18.** The Granola personal API key is in `.env.local` and reaches **231
-notes** spanning Aug 2025 – Aug 2026, ~25–30 a month. A workspace key was tried first and saw only
-4 notes in a Team Space — a workspace key structurally cannot read private notes, and it fails as a
-200 with plausible-looking data rather than an error. The `sites` table landed, answering the
-one-building-two-accounts question. Two duplicate accounts were merged and archived through the new
-clean-up screen: **Cancer Center → South Shore Health** (44 activities and $6,800 now on
-`Cancer Center - Dana Farber / Brigham (101 Columbian St)`) and **Wound Center → South Shore Health**
-($2,100 and 12 activities on `Wound Center (90 Libbey Pkwy, Weymouth)`). Two new Fox Rock landlord
-contracts were created at 90 and 97 Libbey Pkwy. **MRR is unchanged at $47,148** through all of it,
-verified before and after. Live counts now: **20 accounts, 39 buildings**, 97 contacts, 55
-opportunities, 667 activities, 11 open contract periods.
+**What changed on 2026-08-18 (second session).** Phase 7c is built. Granola notes are matched on
+their **title**, because measured against all 231 real notes not one carries an external attendee
+address. `match_aliases` maps a curated phrase to exactly one account, building or deal;
+`profile_email_aliases` maps `ryanbeale26@gmail.com` to Ryan so notes are credited to him rather
+than to the machine account. `npm run granola:probe` prints what every note would match and writes
+nothing; `npm run granola:backfill` logs the history as one undoable batch.
 
-**Still to do in 7c:** run `npm run sites:backfill` (0 of 39 buildings have a site yet), build the
-alias table, write `granola.ts`, alias `ryanbeale26@gmail.com` to Ryan's profile so notes are
-credited to him rather than to the ingest account, and decide backfill vs forward-only for the 231
-historical notes. Two records are still archivable: a stray `90 Libbey` under South Shore Health
-and `97 Libbey Pkwy, Weymouth` still under `South Coast Dermatology`.
+**The measured coverage, and it moves a long way on nine aliases:**
 
-**Also fixed:** the Supabase **Site URL was missing its `https://` scheme**, so every magic link and
-password-recovery link landed on `pjcitahktwnawucoznhk.supabase.co/beales-crm.vercel.app` and died.
-Earlier versions of this file recorded the Site URL as configured — it was, but wrongly, and it
-would have broken the first sign-in for all four remaining colleagues. **Ryan corrected it to
-`https://beales-crm.vercel.app` on 2026-08-18**, so magic links work again.
+| | Clean | Ambiguous | Matched nothing |
+|---|---|---|---|
+| With no aliases at all | 36 | 27 | 168 |
+| With the nine Ryan confirmed | **98** | 27 | 106 |
+
+98 is the same number Ryan's own prototype reached, from a different direction. Every one of the
+private notes matches nothing in both runs — including a long, extremely sensitive note about a
+family member's health and employment, which names Beale's and would have been readable by four
+colleagues had it matched. That is the "store nothing but the id and the date" rule earning its
+keep on real data rather than in the abstract.
+
+**Live counts are exactly as they were before the session: 20 accounts, 39 buildings, 97 contacts,
+55 deals, 667 activities, 11 open contract periods, MRR $47,148.** The backfill was committed,
+inspected, undone, re-committed and undone again to prove reversibility both ways; the mirror was
+then emptied. `import_batches` is **9, not 7** — two rolled-back rows of test residue, the same
+ignorable kind the 5b session left.
+
+### What Phase 7c shipped
+
+| Thing | Why it is the way it is |
+|---|---|
+| **The signal is the note TITLE, not the participants** | Measured, not assumed: not one of 231 notes carries an external attendee address, because most are solo site inspections dictated into a phone. `matchParticipants` resolves nothing on any of them — and worse, returned null, which `run.ts` read as "file the sender in the strangers tray", so Ryan's own Gmail address would have gone in it |
+| **A derived phrase must be a PHRASE; a street address must carry its NUMBER** | Requiring the number is what makes `199 Reedsdale Road` in a private sleep-study note match nothing, and stops a bare "Main St" matching anything. A single-word matcher filed a family hospice note under Beth Israel Lahey on the word "Beth" |
+| **Containment decides, not length** | Two situations look identical to a naive longest-wins. `851 middle st suite 2100` CONTAINS `851 middle`, so the longer one is simply more specific and wins. `Quincy Ambulatory and Plymouth Cordage Park` names two different places at two different points in the title, and longest-wins would silently have picked one — so that is ambiguous |
+| **A curated alias outranks a derived phrase at the same words** | Curation is the whole reason `match_aliases` exists, so it has to beat the thing it was created to correct |
+| **A building and its own account are one place, not two candidates** | Real: the building `Braintree Hill Office Park` sits under the account of the same name, as does `Dermatology of Cape Cod`. Two candidates printing identical words is not a decision anyone can make, and the account is the same either way, so the building — the more specific — wins |
+| **Three outcomes, and only one of them writes** | One record → the link is applied. Two or more → the title is KEPT, the row is `needs_review`, and it is listed on `/admin/ingest` where one alias fixes it and every future note shaped like it. Nothing → the note id and date, and **nothing else** |
+| **No suggestions, and no `inferred`, in 7c** | A deliberate narrowing of the original plan. An activity has one `account_id`, so two competing suggestions on one activity would let a reviewer accept both and have the second silently overwrite the first. `/review` therefore needed no change; quotes and offsets stay in 7d where they belong |
+| **`RawItem.fetchText` is a lazy thunk, called only AFTER a match** | Granola's list endpoint returns the title but not the summary. Fetching lazily means the body of a note that matched nothing is never downloaded, let alone stored — and the notes that match nothing are, by construction, the private ones. The privacy promise as control flow rather than as a comment. `graph.ts` will not set it |
+| **`match_aliases` uses three nullable FKs with `num_nonnulls(...) = 1`** | Not a `(target_table, target_id)` pair, which has no referential integrity: deleting a building would leave a phrase pointing at a ghost the matcher resolves to nothing, with no way to see why. `on delete cascade` means tidying a record up takes its aliases with it |
+| **No minimum length on an alias** | "HTA" is three characters and is a real alias; "SSMC" is four. A short alias is safe *here* because a person typed it. The admin screen still refuses a phrase made only of words that appear across the whole book |
+| **`profile_email_aliases` is not `account_domains`** | `gmail.com` stays permanently on the never-mappable list. A domain claims a company; an address claims a person. Three live bugs fall out of this one table: crediting, the strangers tray, and treating Ryan as external |
+| **The mirror's "already done" check requires a LIVE activity or next step** | Both FKs are `on delete set null`, so undoing the backfill leaves rows claiming `linked` with nothing behind them. Without the second condition those notes would be skipped for ever and **the undo would have been a one-way door** — proved by undoing and re-running, which re-created all 98 |
+| **`normalise_alias()` is duplicated in SQL and TypeScript** | `v_alias_candidates` has to apply it and a view cannot call TypeScript, while the matcher runs over hundreds of titles and cannot make a round trip per phrase. Exactly the `is_public_email_domain()` precedent, and `db:verify` asserts the two suffix tables agree in both directions |
+| **The probe is a terminal script, not a screen** | Its most useful output is the list of titles that matched nothing — which is precisely where the private notes are. Ryan needs to read them to know which alias to add, and they must not be stored anywhere four colleagues can read. A terminal is the only place both are true |
+| **The probe calls `matchItem()`, the same function the job calls** | A probe that reasons about matching slightly differently from the job is the "two counts of one number eventually disagree" mistake, and this number is the one that decides what gets aliased |
+| **The backfill is a local script, not a cron drain** | Draining a year of notes across several 300-second invocations would need new state to carry one batch id between them, or produce eight Undo buttons for one decision. Run from a laptop there is no cap: one batch, one button. It signs in as a real **admin**, prompted, because `import_batches` is admin-write and a year of history appearing in the app should have somebody's name on it |
+| **Nothing new was built for undo** | Activities carry `import_batch_id` and `activities` was already in `rollbackImport`'s table list. That is the whole of what makes the backfill reversible |
+
+**What the Granola API actually does**, measured against the real account, because two documented
+facts are wrong:
+
+- **`limit` is ignored.** Every page is 10 notes regardless. This file previously recorded a maximum
+  page size of 30. 231 notes is therefore ~24 requests, not ~8.
+- **The calendar join key is `calendar_event.calendar_event_id`, not `iCalUId`.** This account is on
+  Google Calendar and reports a Google event id. 7b must match on that field.
+- `summary_text` is already plain text, so nothing needs markup stripping. `transcript` is null
+  unless asked for, and `granola.ts` never asks.
+- A list row carries **no** attendees and **no** calendar event — which is what makes the lazy
+  `fetchText` worth its keep.
+- `updated_after` and `created_after` both work and correctly return `hasMore: false` with a null
+  cursor when the filtered set fits on one page.
+
+### Data findings the probe turned up — Ryan's to decide
+
+These are data, not code, and none of them is safe to guess at:
+
+- **`46 Oberry St` is spelled with a double R in the CRM.** Every Granola title says "46 Obery st",
+  so the address matches nothing. Eight or more notes are affected. Either correct the building or
+  add an alias.
+- **`797 Main St + Industrial Park`** is one building record, named after its own account, with two
+  addresses crammed into one field. It is why "797 main" is ambiguous while "797 main st" is clean.
+- **Several sites Beale's demonstrably services are not in the CRM at all** — 851 Middle St
+  (suites 2100 and 3500), 295 Old Oak St Pembroke, 143 Longwater, 186 Tremont St, Stetson,
+  Kneeland St. Some are closed-won deals whose buildings were never created, which is also why the
+  matcher cannot see them: **only OPEN deals enter the phrase book**, since a phrase from a deal
+  closed two years ago would file tonight's note against history.
+- **Archive the two duplicate records BEFORE `sites:backfill --commit`.** The dry run reports 39
+  buildings → 36 sites and names both strays inside the shared sites: `90 Libbey` under South Shore
+  Health, and `97 Libbey Pkwy, Weymouth` under South Coast Dermatology. The script filters
+  `deleted_at is null`, so archiving first makes both sites come out right; backfilling first builds
+  a site around records that are about to vanish. Archiving also collapses roughly seven of the 27
+  ambiguities on its own.
+- `101 Columbian St` does **not** appear as a multi-contract site, so the Cancer Center merge left
+  one building there. Nothing to do.
+
+### Still to do, in this order
+
+1. **Archive the two records at `/admin/cleanup`**, then `npm run sites:backfill -- --commit`.
+   Success is `Created 36 sites and linked 39 of 39 buildings.`
+2. **`npm run granola:probe`**, add aliases at `/admin/ingest`, probe again. Nine aliases took clean
+   matches from 36 to 98; the 106 that still match nothing include perhaps a dozen recurring
+   business shapes worth one alias each.
+3. **`npm run granola:backfill -- --commit`** when the list looks right. It prompts for an admin
+   email and password. Undo is the button at the bottom of `/admin/import`.
+4. **The Vercel environment variables**, or the cron still runs nowhere: `INGEST_USER_EMAIL`,
+   `INGEST_USER_PASSWORD`, `CRON_SECRET`, `GRANOLA_API_KEY`.
+5. Phase 7b when the IT consultant delivers, then Phase 6.
+
+**Also fixed on 2026-08-18:** the Supabase **Site URL was missing its `https://` scheme**, so every
+magic link and password-recovery link landed on
+`pjcitahktwnawucoznhk.supabase.co/beales-crm.vercel.app` and died. Earlier versions of this file
+recorded the Site URL as configured — it was, but wrongly, and it would have broken the first
+sign-in for all four remaining colleagues. **Ryan corrected it to `https://beales-crm.vercel.app`.**
 
 Separately, **Defender Safe Links on Exchange Online pre-opens recovery links and burns the
 one-time token** before a human clicks, so a Supabase recovery email can arrive already expired
 (`otp_expired`). That is not retryable and it will affect all five accounts. `npm run user:password`
-exists to take email out of the loop entirely — it prompts for the password with the echo
-suppressed and calls `admin.updateUserById` locally.
+exists to take email out of the loop entirely.
 
 **Previously:** 7a shipped. The nightly ingest spine is built, tested end to end against the real
 database and committed; migration `20260818090000_ingest.sql` is **already applied** to
@@ -337,6 +422,21 @@ The 261 left over are genuinely a person's job — vendors (`CleanSmarts`), vari
 | `src/app/api/cron/ingest/route.ts` | `maxDuration = 800`, constant-time `CRON_SECRET` check |
 | `src/app/(app)/review/*` | The queue, with bulk apply and dismiss |
 | `src/app/(app)/admin/ingest/*` | Source health, the domain map with candidates, and the relink upload |
+
+Phase 7c added:
+
+| File | Job |
+|---|---|
+| `supabase/migrations/20260820090000_match_aliases.sql` | `normalise_alias()`, `match_aliases`, `profile_email_aliases`, `ingested_items.matched_on`, `v_alias_candidates` |
+| `supabase/migrations/20260820091000_alias_candidates_distinct.sql` | One offer per phrase per record — a building named after its own address was offered twice |
+| `src/lib/ingest/titles.ts` | Normalisation, date/time stripping, `addressPhrases()`, the phrase rule, `matchTitle()` with the containment rule, `activityTypeForTitle()`. **No database, no network** |
+| `src/lib/ingest/granola.ts` | `listGranolaNotes()`, `granolaListItem()` with the lazy `fetchText`, `makeGranolaSource()`. Rate-limited, read-only, never asks for a transcript |
+| `src/lib/ingest/match.ts` | Gained `usesTitleMatching()`, `matchItem()` and the phrase book in `loadDirectory()` |
+| `scripts/granola-env.ts` | `.env.local`, sign in as the ingest profile, sign in as an admin with a hidden prompt |
+| `scripts/granola-probe.ts` | The probe, plus `--selftest`: 14 hazard cases, no network, no database |
+| `scripts/granola-backfill.ts` | Dry run then `--commit`. One batch, one Undo button |
+| `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
+| `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
 `db:verify` grew from 118 to **157 checks**.
 
@@ -550,11 +650,11 @@ shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`)
 `npm run db:check-remote` confirms against the live database that a stranger holding the
 public key can read and write nothing.
 
-**Accounts: ten profiles.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob
-Mulligan and Victor Melo. Brendan Mulligan is deactivated. Three QA logins —
-`qa-phase5@`, `qa-phase5b@` and `qa-phase7@` — are **deactivated, do not delete**: they hold the
-audit rows for the 91 Longwater Drive correction and for the Phase 5b and 7a testing, and removing
-a profile would erase who made those changes.
+**Accounts: eleven profiles.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob
+Mulligan and Victor Melo. Brendan Mulligan is deactivated. Four QA logins —
+`qa-phase5@`, `qa-phase5b@`, `qa-phase7@` and `qa-phase7c@` — are **deactivated, do not delete**:
+they hold the audit rows for the 91 Longwater Drive correction and for the Phase 5b, 7a and 7c
+testing, and removing a profile would erase who made those changes.
 
 The tenth is **`ingest@bealesllc.com`, "Nightly ingest"** — `role = field`, `sees_rates = false`,
 **`is_active = true` and `is_service = true`**. It is active because `is_member()` requires it and
@@ -763,7 +863,10 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **193 checks** |
+| `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
+| `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
+| `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
 | `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
 | `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
 | `npx supabase db push` | Applies migrations to the real Supabase project. **Every migration including `20260818090000_ingest.sql` is already applied** — this is a no-op until a new one is written |
@@ -845,6 +948,19 @@ Two things made it expensive: the failure is at build time so nothing about the 
 protects you, and **a failed build leaves the previous deployment serving happily**, so production
 looks fine while every push silently fails. The Phase 7a commit sat unpushed and undeployed for a
 day because of it. Check the plan before raising it.
+
+**A PostgREST `select` must be a single string LITERAL, not a concatenation.** supabase-js parses
+the select string at the *type* level to work out the row type, and `'a, b, ' + 'c(d)'` widens to
+`string` — so every column comes back as `GenericStringError` and the whole query fails to typecheck
+with errors that look like the columns do not exist. Keep long selects on one long line.
+
+**A script cannot import `@/lib/...` or anything marked `server-only` without help.** Node 24 strips
+types but does not resolve tsconfig `paths`, and `server-only` throws outside a React Server
+Component. Both are solved by how the scripts are launched:
+`node --conditions=react-server --import tsx <script.ts>` — `tsx` resolves the alias, and the
+condition resolves `server-only` to its own empty module. `tsx` is a devDependency for exactly this,
+and the reason it is worth one is that the alternative is a second copy of the title matcher, which
+is the mistake this repo has a standing rule against.
 
 **Naming a foreign key in a PostgREST embed.** `contacts` and `accounts` are joined *twice* — `contacts.account_id` and `accounts.primary_contact_id` — so `select('*, account:accounts(...)')` fails with "more than one relationship was found". Write `accounts!contacts_account_id_fkey(...)`. The same applies wherever two tables have two FKs (buildings↔profiles via `owner_id` and `secondary_owner_id`).
 
@@ -991,6 +1107,26 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
 
+**Opened or closed by Phase 7c:**
+- [x] ~~Alias `ryanbeale26@gmail.com` to Ryan's profile~~ — done, through `profile_email_aliases`.
+      All 98 matched notes are credited to Ryan Beale, none to the machine account.
+- [x] ~~Backfill or forward-only for the 231 historical notes~~ — forward-only nightly, with the
+      history as a separate deliberate batch run from a laptop. Built, tested, undone twice.
+- [x] ~~Seed `match_aliases` with what Ryan confirmed~~ — the nine are in: `cancer center`,
+      `wound center`, and `bilh` / `beth israel` / `beth israel lahey` / `beth israel deaconess` /
+      `bidmc` onto `Beth Israel (BIDMC)`.
+- [ ] **Roughly a dozen recurring business shapes still match nothing** and are worth one alias
+      each — 851 Middle St by suite, 295 Old Oak, 143 Longwater / SSMC, 186 Tremont, Stetson,
+      Kneeland St, Foxrock building 42, Gener8, Elevation Apartments. Run the probe and work down
+      the list. Some of these have no building record at all, which is the deeper fix.
+- [ ] **Is `46 Oberry St` a typo for `46 Obery St`?** Every Granola title says Obery. Correcting the
+      building would fix eight or more notes at once; an alias would paper over it.
+- [ ] **`797 Main St + Industrial Park`** is one building record with two addresses in one field,
+      named after its own account. Worth splitting or renaming.
+- [ ] Whether a **closed-won** deal should be able to lend its name to the matcher. Today only open
+      deals do, deliberately — but several closed-won deals are places Beale's still services whose
+      buildings were never created, so their notes match nothing.
+
 **Opened by Phase 7a:**
 - [ ] `account_domains` is **empty**. The middle confidence tier does nothing until it is filled, and `/admin/ingest` already offers twelve real candidates derived from existing contacts (ciminelli.com, bsci.com, foxrockproperties.com, bidmc.harvard.edu, medtronic.com, rmrgroup.com, and so on). One click each.
 - [ ] The 261 orphan activities the relink could not place. Worth a look at the "what still matches nothing" list before deciding whether they are worth hand-linking at all.
@@ -1068,6 +1204,14 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-18 | Granola's match signal is the note **title**, not the attendee list | Measured against all 231 real notes: not one carries an external attendee address, because most are solo site inspections dictated into a phone. The participant matcher that mail uses resolves *nothing* on any of them. Titles carry building addresses and deal names instead. Matching is phrase-based, never single-word: a single-token version scored worse (40 clean matches vs 98) and filed a family hospice note under Beth Israel Lahey on the word "Beth". All nine personal notes in the corpus match nothing under the phrase rule, which is the privacy promise proved on real data rather than asserted |
 | 2026-08-18 | `--password` on an existing account was silently doing nothing | `create-user.mjs` fell through to a branch that updated the profile and never touched the auth record, then printed "Password unchanged" — while reporting success. It is the script the whole team gets onboarded with and all four remaining colleagues already have profile rows, so every one of them would have failed quietly. Fixed, and `npm run user:password` added: it prompts with the echo suppressed rather than taking the value as an argument, because arguments land in shell history and in `ps` |
 | 2026-08-17 | The fixture source exports the same shape the real connectors will | `graph.ts` and `granola.ts` swap in at one line in the route. That is what let every hard decision — RLS under a machine account, undo through `apply_gap_fill`, dedupe, idempotency, the privacy rule — be proved against the real database before a single credential existed. Its addresses are `.invalid`, so a fixture run against production creates nothing |
+| 2026-08-18 | **A Granola note is matched on its TITLE, and the rule is containment rather than length** | Two shapes look identical to longest-wins and mean opposite things. `851 middle st suite 2100` contains `851 middle`, so the longer phrase is more specific and wins — which is how one address carrying a landlord contract and a tenant contract gets resolved. `Quincy Ambulatory and Plymouth Cordage Park` names two different places at two different points in the title, both true, and longest-wins would have silently picked one. So a phrase wholly inside another is discarded and what survives is counted by distinct record |
+| 2026-08-18 | **A street address must carry its NUMBER; a derived name phrase must be a PHRASE** | This is the rule the whole phase rests on and it is not negotiable. `199 Reedsdale Road` appears in a private sleep-study note; requiring the number is why it matches nothing. A single-word matcher filed a family hospice note under Beth Israel Lahey on the word "Beth". Curated aliases are exempt because a person typed them — "HTA" is three characters and is real — so curation, not length, is the safeguard |
+| 2026-08-18 | **A note matching nothing gets its id and its date and nothing else** | Ryan's call, and the strongest possible validation arrived from the data: the unmatched list contains a long note about a family member's suicidality, addiction and dismissal, which names Beale's. Had any phrase in it matched, its title and a 500-character summary would have been readable by four colleagues. A note matching TWO records keeps its title, because it is demonstrably about the business and one alias fixes it permanently |
+| 2026-08-18 | **`fetchText` is lazy, and called only after a match** | Granola's list endpoint gives the title but not the summary, so the body costs a second request. Deferring it means the contents of a private note are never downloaded at all, rather than downloaded and then discarded. The privacy promise expressed as control flow, which is harder to quietly stop honouring than a comment |
+| 2026-08-18 | **No suggestions and no `inferred` tier in 7c** | A narrowing of the plan, taken on looking at the data. An activity has one `account_id`, so two competing suggestions on one activity would let a reviewer accept both and have the second silently overwrite the first. An ambiguity is instead a `needs_review` row listed on `/admin/ingest`, where one alias resolves it and every future note shaped the same way. `/review` needed no change at all |
+| 2026-08-18 | **The mirror's "already done" check requires a live activity, not just the status** | Both link columns are `on delete set null`, so undoing the backfill leaves 98 rows claiming `linked` with nothing behind them. Without the second condition those notes would be skipped for ever and the undo would have been a **one-way door** — the worst possible property for the button that exists to make a decision reversible. Proved by undoing and re-running: all 98 came back |
+| 2026-08-18 | **The historical backfill is a local script signing in as an admin, not a cron drain** | The 300-second Hobby cap would need new state to carry one batch id across several invocations, or would produce eight Undo buttons for one decision. Locally there is no cap. It signs in as a real admin because `import_batches` is admin-write — correctly, since undo is an admin action and a year of history appearing in the app should have a person's name on it. Prompted rather than argued or added to `.env.local`: an argument lands in shell history and in `ps` |
+| 2026-08-18 | **The probe is a terminal script and calls the same `matchItem()` the job calls** | Its most valuable output is the list of titles that matched nothing, which is exactly where the private notes are — so it belongs on Ryan's own screen and nowhere near a shared table. And a probe that matched slightly differently from the job would be two counts of one number, where the number decides what gets curated |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->

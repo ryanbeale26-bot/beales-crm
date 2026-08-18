@@ -1568,6 +1568,7 @@ export type Database = {
           last_seen_at: string
           mailbox_id: string | null
           matched_by: Database["public"]["Enums"]["match_confidence"] | null
+          matched_on: string | null
           next_step_id: string | null
           occurred_at: string
           participants: Json
@@ -1586,6 +1587,7 @@ export type Database = {
           last_seen_at?: string
           mailbox_id?: string | null
           matched_by?: Database["public"]["Enums"]["match_confidence"] | null
+          matched_on?: string | null
           next_step_id?: string | null
           occurred_at: string
           participants?: Json
@@ -1604,6 +1606,7 @@ export type Database = {
           last_seen_at?: string
           mailbox_id?: string | null
           matched_by?: Database["public"]["Enums"]["match_confidence"] | null
+          matched_on?: string | null
           next_step_id?: string | null
           occurred_at?: string
           participants?: Json
@@ -1815,6 +1818,124 @@ export type Database = {
           sort_order?: number
         }
         Relationships: []
+      }
+      match_aliases: {
+        Row: {
+          account_id: string | null
+          added_by: string | null
+          alias: string
+          building_id: string | null
+          created_at: string
+          id: string
+          note: string | null
+          opportunity_id: string | null
+        }
+        Insert: {
+          account_id?: string | null
+          added_by?: string | null
+          alias: string
+          building_id?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          opportunity_id?: string | null
+        }
+        Update: {
+          account_id?: string | null
+          added_by?: string | null
+          alias?: string
+          building_id?: string | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          opportunity_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_aliases_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_aliases_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_by_month"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_account_mrr_change"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "v_quiet_accounts"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_aliases_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_aliases_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_current_value"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_mrr_by_month"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_aliases_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_opportunity_outcomes"
+            referencedColumns: ["opportunity_id"]
+          },
+          {
+            foreignKeyName: "match_aliases_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "v_weighted_pipeline"
+            referencedColumns: ["opportunity_id"]
+          },
+        ]
       }
       next_steps: {
         Row: {
@@ -2396,6 +2517,48 @@ export type Database = {
         }
         Relationships: []
       }
+      profile_email_aliases: {
+        Row: {
+          added_by: string | null
+          created_at: string
+          email: string
+          id: string
+          note: string | null
+          profile_id: string
+        }
+        Insert: {
+          added_by?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          note?: string | null
+          profile_id: string
+        }
+        Update: {
+          added_by?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          note?: string | null
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_email_aliases_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_email_aliases_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -2932,6 +3095,17 @@ export type Database = {
           mrr_3m: number | null
           mrr_6m: number | null
           mrr_now: number | null
+        }
+        Relationships: []
+      }
+      v_alias_candidates: {
+        Row: {
+          account_id: string | null
+          alias: string | null
+          building_id: string | null
+          kind: string | null
+          label: string | null
+          opportunity_id: string | null
         }
         Relationships: []
       }
@@ -3698,6 +3872,7 @@ export type Database = {
         Args: { p_from_building: string; p_to_building: string }
         Returns: number
       }
+      normalise_alias: { Args: { p_text: string }; Returns: string }
       rollback_field_changes: { Args: { p_batch_id: string }; Returns: Json }
       set_building_monthly_value: {
         Args: {

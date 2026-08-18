@@ -42,6 +42,20 @@ export type RawItem = {
   /** Plain text, already stripped of markup by the source. Trimmed to a snippet
    *  before it is stored — the full text never lands in the database. */
   text: string | null
+  /**
+   * Fetch the text on demand, for a source where it costs an extra request.
+   *
+   * Set INSTEAD of `text`, and the caller only ever calls it AFTER a match. That
+   * is not an optimisation, or not only: Granola's list endpoint returns the
+   * title but not the summary, and roughly a quarter of the notes in it are
+   * Ryan's own medical appointments and family arrangements. Fetching lazily
+   * means the body of a note that matched nothing is never downloaded at all,
+   * let alone stored — the privacy promise expressed as control flow rather than
+   * as a comment somebody could quietly stop honouring.
+   *
+   * `graph.ts` will not set this: a Graph message arrives with its body already.
+   */
+  fetchText?: () => Promise<string | null>
   participants: Participant[]
   /** Conversation id or iCalUId: what ties a reply to its thread and a Granola
    *  note to the meeting it came from. */

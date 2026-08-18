@@ -1677,6 +1677,215 @@ async function main() {
   check('authenticated can select v_site_contracts', Number.isInteger(siteView.rows[0].n))
 
   // ---------------------------------------------------------------------------
+  console.log('\nMatch aliases: what a note title means')
+
+  // normalise_alias() is duplicated in TypeScript as normaliseAlias(), because
+  // v_alias_candidates has to apply it and a view cannot call TypeScript. Both
+  // halves are pinned: the behaviour here, and the suffix table below.
+  const norm = await db.query(`
+    select
+      public.normalise_alias('90 Libbey Parkway.')        as pkwy,
+      public.normalise_alias('  Dana-Farber / Brigham  ') as punct,
+      public.normalise_alias('Ste 3500')                  as ste,
+      public.normalise_alias('851 MIDDLE STREET')         as upper,
+      public.normalise_alias('   ')                       as blank
+  `)
+  const n = norm.rows[0]
+  check('normalise_alias collapses street suffixes', n.pkwy === '90 libbey pkwy', String(n.pkwy))
+  check('it flattens punctuation to single spaces', n.punct === 'dana farber brigham', String(n.punct))
+  check('it treats Ste as Suite', n.ste === 'suite 3500', String(n.ste))
+  check('it lower-cases', n.upper === '851 middle st', String(n.upper))
+  check('an empty phrase is null, not an empty string', n.blank === null)
+
+  const titlesTs = await readFile(
+    new URL('../src/lib/ingest/titles.ts', import.meta.url).pathname,
+    'utf8',
+  )
+  // Pull the pairs straight out of the plpgsql body, so the assertion cannot
+  // drift from the function it is checking.
+  const sqlPairs = [
+    ...(await readFile(
+      join(MIGRATIONS_DIR, '20260820090000_match_aliases.sql'),
+      'utf8',
+    )).matchAll(/array\['([a-z]+)',\s*'([a-z]+)'\]/g),
+  ].map((m) => [m[1], m[2]])
+  check('the SQL suffix table is not empty', sqlPairs.length >= 10, `${sqlPairs.length} pairs`)
+  check(
+    'every street suffix in SQL is in titles.ts too',
+    sqlPairs.every(([long, short]) => new RegExp(`\\b${long}:\\s*'${short}'`).test(titlesTs)),
+    sqlPairs.filter(([l, s]) => !new RegExp(`\\b${l}:\\s*'${s}'`).test(titlesTs)).join(' '),
+  )
+  const tsPairs = [...titlesTs.matchAll(/^\s{2}([a-z]+): '([a-z]+)',$/gm)].map((m) => [m[1], m[2]])
+  check(
+    'and every one in titles.ts is in SQL',
+    tsPairs.length === sqlPairs.length &&
+      tsPairs.every(([long, short]) => sqlPairs.some(([l, s]) => l === long && s === short)),
+    `ts ${tsPairs.length} vs sql ${sqlPairs.length}`,
+  )
+
+  const ACC_AL = 'aaaa0000-0000-0000-0000-0000000000a1'
+  const B_AL1 = 'aaaa0000-0000-0000-0000-0000000000c1'
+  const B_AL2 = 'aaaa0000-0000-0000-0000-0000000000c2'
+  const B_AL3 = 'aaaa0000-0000-0000-0000-0000000000c3'
+
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into accounts (id, name) values ('${ACC_AL}', 'Alias Test Health');
+    insert into buildings (id, account_id, name, address_line1, city) values
+      ('${B_AL1}', '${ACC_AL}', 'Landlord contract', '90 Shared Pkwy', 'Weymouth'),
+      ('${B_AL2}', '${ACC_AL}', 'Tenant contract',   '90 Shared Parkway', 'Weymouth'),
+      ('${B_AL3}', '${ACC_AL}', 'Sole contract',     '77 Distinct Way', 'Quincy');
+    insert into match_aliases (alias, building_id, added_by)
+      values ('wound center', '${B_AL1}', '${RYAN}');
+  `)
+
+  // unique(alias) IS the contract: a phrase that could mean two records must
+  // mean neither, decided by the database rather than counted at 3am.
+  let dupeAlias = false
+  try {
+    await db.exec(
+      `set local test.user_id = '${RYAN}';
+       insert into match_aliases (alias, building_id) values ('wound center', '${B_AL2}');`,
+    )
+  } catch {
+    dupeAlias = true
+  }
+  check('one alias cannot mean two records', dupeAlias)
+
+  let noTarget = false
+  try {
+    await db.exec(`insert into match_aliases (alias) values ('orphan phrase');`)
+  } catch {
+    noTarget = true
+  }
+  check('an alias must point at something', noTarget)
+
+  let twoTargets = false
+  try {
+    await db.exec(
+      `insert into match_aliases (alias, account_id, building_id)
+       values ('two targets', '${ACC_AL}', '${B_AL1}');`,
+    )
+  } catch {
+    twoTargets = true
+  }
+  check('an alias cannot point at two things at once', twoTargets)
+
+  // Stored already normalised, so a lookup is an equality rather than a function
+  // call on every row.
+  let unnormalised = false
+  try {
+    await db.exec(`insert into match_aliases (alias, building_id) values ('Wound Center', '${B_AL2}');`)
+  } catch {
+    unnormalised = true
+  }
+  check('an alias must be stored already normalised', unnormalised)
+
+  const readAlias = await asUser(db, VICTOR, () =>
+    db.query('select count(*)::int as n from match_aliases'),
+  )
+  check('every member can read the alias map', readAlias.rows[0].n === 1)
+
+  let victorAliasWrite = false
+  try {
+    await asUser(db, VICTOR, () =>
+      db.query(`insert into match_aliases (alias, building_id) values ('victors phrase', '${B_AL2}')`),
+    )
+  } catch {
+    victorAliasWrite = true
+  }
+  check('only an admin can change the alias map', victorAliasWrite)
+
+  // The candidates view carries the same refusal as v_domain_candidates: a
+  // phrase two records would both claim is excluded, never offered.
+  const cands = await asUser(db, VICTOR, () =>
+    db.query(`select alias, kind from v_alias_candidates where alias like '%shared%' or alias like '%distinct%'`),
+  )
+  const aliases = cands.rows.map((r) => r.alias)
+  check(
+    'a phrase two buildings share is never offered',
+    !aliases.includes('90 shared pkwy'),
+    aliases.join(' | '),
+  )
+
+  // On delete cascade: tidying a record up takes its aliases with it, rather
+  // than leaving a phrase pointing at a ghost the matcher resolves to nothing.
+  await db.exec(`set local test.user_id = '${RYAN}'; delete from buildings where id = '${B_AL1}';`)
+  const afterDelete = await db.query(
+    `select count(*)::int as n from match_aliases where alias = 'wound center'`,
+  )
+  check('deleting a record takes its aliases with it', afterDelete.rows[0].n === 0)
+
+  check(
+    'a phrase only one record claims is offered',
+    aliases.includes('77 distinct way'),
+    aliases.join(' | '),
+  )
+
+  // A building named after its own address produced the same alias twice — once
+  // as Address, once as Building — which the admin screen rendered as two
+  // identical chips sharing a React key.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into buildings (id, account_id, name, address_line1, city)
+      values ('aaaa0000-0000-0000-0000-0000000000c4', '${ACC_AL}', '5 Selfnamed Way', '5 Selfnamed Way', 'Hull');
+  `)
+  const selfNamed = await asUser(db, VICTOR, () =>
+    db.query(`select count(*)::int as n from v_alias_candidates where alias = '5 selfnamed way'`),
+  )
+  check('a record never offers the same phrase twice', selfNamed.rows[0].n === 1, `${selfNamed.rows[0].n} rows`)
+
+  // Granola authenticates as a personal Gmail address. Without this table
+  // creditTo() falls back to the machine account and every note reads "logged
+  // by Nightly ingest" instead of by a person.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into profile_email_aliases (profile_id, email, added_by)
+      values ('${RYAN}', 'someone@example.invalid', '${RYAN}');
+  `)
+  let dupeEmail = false
+  try {
+    await db.exec(
+      `insert into profile_email_aliases (profile_id, email)
+       values ('${VICTOR}', 'someone@example.invalid');`,
+    )
+  } catch {
+    dupeEmail = true
+  }
+  check('one address cannot belong to two people', dupeEmail)
+
+  let mixedCase = false
+  try {
+    await db.exec(
+      `insert into profile_email_aliases (profile_id, email) values ('${VICTOR}', 'Someone@Example.Invalid');`,
+    )
+  } catch {
+    mixedCase = true
+  }
+  check('a profile alias must be stored lower-cased', mixedCase)
+
+  let victorAlias = false
+  try {
+    await asUser(db, VICTOR, () =>
+      db.query(`insert into profile_email_aliases (profile_id, email) values ('${VICTOR}', 'v@example.invalid')`),
+    )
+  } catch {
+    victorAlias = true
+  }
+  check('only an admin can claim an address for somebody', victorAlias)
+
+  // matched_on is what lets the admin screen say WHY, rather than asking anyone
+  // to take the confidence tier on faith.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    insert into ingested_items (source, external_id, occurred_at, subject, status, matched_by, matched_on)
+      values ('granola', 'note-matched-on', now(), 'Wound center inspection', 'linked', 'exact', 'wound center');
+  `)
+  const why = await db.query(
+    `select matched_on from ingested_items where external_id = 'note-matched-on'`,
+  )
+  check('the mirror records the phrase that matched', why.rows[0]?.matched_on === 'wound center')
+  // ---------------------------------------------------------------------------
   console.log('\nDemo seed data')
 
   const seedSql = await readFile(

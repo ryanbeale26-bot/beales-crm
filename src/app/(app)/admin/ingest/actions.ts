@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { domainOf, isPublicEmailDomain, normaliseAddress } from '@/lib/ingest/addresses'
+import { isTooGenericToCurate, normaliseAlias } from '@/lib/ingest/titles'
 import { propose, type Proposal } from '@/lib/ingest/suggestions'
 import { buildRelinkProposal } from '@/lib/import/relink'
 import { createClient } from '@/lib/supabase/server'
@@ -163,4 +164,137 @@ export async function proposeRelink(
 export async function explainAddress(raw: string) {
   const address = normaliseAddress(raw)
   return { address, domain: domainOf(raw), isPublic: isPublicEmailDomain(domainOf(raw)) }
+}
+
+/**
+ * Map a phrase in a note title to exactly one record.
+ *
+ * The validation here is the same rule the migration enforces, said earlier and
+ * in English — the pattern `addDomain` above already follows. A constraint
+ * violation surfaced raw is a worse screen than a sentence explaining the rule.
+ */
+export async function addAlias(
+  rawAlias: string,
+  target: string,
+  note: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can change the alias map.' }
+
+  const alias = normaliseAlias(rawAlias)
+  if (!alias) return { ok: false, error: 'Type the words as they appear in a note title.' }
+
+  if (alias.length < 3) {
+    return {
+      ok: false,
+      error: `“${alias}” is too short to be safe — two characters will turn up inside words that have nothing to do with the record.`,
+    }
+  }
+
+  if (isTooGenericToCurate(alias)) {
+    return {
+      ok: false,
+      error: `“${alias}” is made only of words that appear across the whole book, so it would match notes about other clients. Add something that identifies this one — a street number, or a name.`,
+    }
+  }
+
+  const [kind, id] = target.split(':')
+  if (!id || !['account', 'building', 'opportunity'].includes(kind)) {
+    return { ok: false, error: 'Choose what this phrase should mean.' }
+  }
+
+  const { data: clash } = await supabase
+    .from('match_aliases')
+    .select('alias, account_id, building_id, opportunity_id')
+    .eq('alias', alias)
+    .maybeSingle()
+
+  if (clash) {
+    return {
+      ok: false,
+      error: `“${alias}” is already mapped. Remove the existing one first if it is wrong — a phrase that could mean two records has to mean neither.`,
+    }
+  }
+
+  const { error } = await supabase.from('match_aliases').insert({
+    alias,
+    account_id: kind === 'account' ? id : null,
+    building_id: kind === 'building' ? id : null,
+    opportunity_id: kind === 'opportunity' ? id : null,
+    note: note?.trim() || null,
+    added_by: userId,
+  })
+
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/admin/ingest')
+  return { ok: true }
+}
+
+export async function removeAlias(id: string): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, admin } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can change the alias map.' }
+
+  const { error } = await supabase.from('match_aliases').delete().eq('id', id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/admin/ingest')
+  return { ok: true }
+}
+
+/**
+ * Claim another email address for one of the five.
+ *
+ * Granola signs in as a personal Gmail address, so without this every note it
+ * produces is credited to the machine account rather than to a person — and
+ * Ryan's own address is filed in the list of strangers we do not know.
+ *
+ * This is NOT the domain map, and the difference matters: gmail.com stays on the
+ * never-mappable list, because a domain says "this company" while an address
+ * says "this person".
+ */
+export async function addProfileAlias(
+  rawEmail: string,
+  profileId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, admin, userId } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can claim an address for somebody.' }
+
+  const email = normaliseAddress(rawEmail)
+  if (!email) return { ok: false, error: `“${rawEmail}” does not look like an email address.` }
+  if (!profileId) return { ok: false, error: 'Choose whose address this is.' }
+
+  const { data: clash } = await supabase
+    .from('profile_email_aliases')
+    // The FK must be named: profile_email_aliases points at profiles TWICE, via
+    // profile_id and added_by, so a bare embed fails with "more than one
+    // relationship was found". Same trap as contacts -> accounts.
+    .select('profile_id, profiles!profile_email_aliases_profile_id_fkey ( full_name )')
+    .eq('email', email)
+    .maybeSingle()
+
+  if (clash) {
+    const name = (clash.profiles as { full_name: string } | null)?.full_name ?? 'somebody else'
+    return { ok: false, error: `${email} is already recorded as ${name}.` }
+  }
+
+  const { error } = await supabase
+    .from('profile_email_aliases')
+    .insert({ email, profile_id: profileId, added_by: userId })
+
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/admin/ingest')
+  return { ok: true }
+}
+
+export async function removeProfileAlias(id: string): Promise<{ ok: boolean; error?: string }> {
+  const { supabase, admin } = await requireAdmin()
+  if (!admin) return { ok: false, error: 'Only an admin can claim an address for somebody.' }
+
+  const { error } = await supabase.from('profile_email_aliases').delete().eq('id', id)
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/admin/ingest')
+  return { ok: true }
 }

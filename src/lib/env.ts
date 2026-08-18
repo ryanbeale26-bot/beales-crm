@@ -68,6 +68,26 @@ export function hasIngestEnv(): boolean {
 }
 
 /**
+ * The Granola personal API key.
+ *
+ * A personal key, not a workspace key, and the difference is not cosmetic: a
+ * workspace key structurally cannot read private notes, and it fails by
+ * returning 200 with four notes from a Team Space rather than by erroring. A
+ * plausible-looking wrong answer is the worst failure mode there is, so if this
+ * ever reads only a handful of notes, suspect the key before the code.
+ */
+export function granolaApiKey(): string {
+  return required('GRANOLA_API_KEY', process.env.GRANOLA_API_KEY)
+}
+
+/** True when Granola is configured. Lets the nightly run skip the source
+ *  quietly on a machine that has never had the key, rather than throwing and
+ *  taking the whole run down with it. */
+export function hasGranolaEnv(): boolean {
+  return Boolean(process.env.GRANOLA_API_KEY?.trim())
+}
+
+/**
  * Where this app is reachable. Used to build the magic-link redirect, so
  * getting it wrong means every sign-in link points at the wrong place.
  *

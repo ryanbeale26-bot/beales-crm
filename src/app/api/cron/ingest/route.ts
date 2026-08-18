@@ -2,8 +2,9 @@ import { timingSafeEqual } from 'node:crypto'
 
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { cronSecret } from '@/lib/env'
+import { cronSecret, granolaApiKey, hasGranolaEnv } from '@/lib/env'
 import { fixtureSource } from '@/lib/ingest/fixtures'
+import { makeGranolaSource } from '@/lib/ingest/granola'
 import { runIngest } from '@/lib/ingest/run'
 import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
 
@@ -73,9 +74,18 @@ export async function GET(request: NextRequest) {
     const actorId = await ingestProfileId(supabase)
 
     const summary = await runIngest(supabase, {
-      // 7b replaces this with the Graph and Granola connectors. They export the
-      // same shape, so this list is the only line that changes.
-      sources: [{ name: 'fixtures', fetch: fixtureSource }],
+      // Granola is real as of 7c. The fixtures stay wired up beside it: their
+      // addresses are .invalid, so they create nothing, and they are how the
+      // mail path is exercised until 7b has credentials. 7b adds graph.ts here
+      // and nothing else changes, because every source exports one shape.
+      sources: [
+        { name: 'fixtures', fetch: fixtureSource },
+        // Skipped rather than thrown when the key is absent: a machine with no
+        // Granola key should still run the rest of the job.
+        ...(hasGranolaEnv()
+          ? [{ name: 'granola', fetch: makeGranolaSource(granolaApiKey()) }]
+          : []),
+      ],
       since: new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString(),
       deadline: startedAt + maxDuration * 1000 - HEADROOM_MS,
       actorId,
