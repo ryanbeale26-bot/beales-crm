@@ -40,6 +40,20 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
   if (error) throw new Error(`Could not load this building: ${error.message}`)
   if (!building) notFound()
 
+  // Who else we serve at this address. The point of `sites`: one physical
+  // building can carry a landlord contract and a tenant contract at once, and
+  // seeing them side by side is how you tell a genuine second customer from a
+  // duplicated record.
+  const { data: neighbours } = building.site_id
+    ? await supabase
+        .from('buildings')
+        .select('id, name, tenancy, account:accounts(id, name)')
+        .eq('site_id', building.site_id)
+        .neq('id', id)
+        .is('deleted_at', null)
+        .order('name')
+    : { data: null }
+
   const [{ data: periods }, { data: links }, { data: hours }, { data: services }, { data: staff }, { data: allEmployees }] =
     await Promise.all([
     supabase
@@ -56,6 +70,10 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
         .select('weekly_hours, monthly_hours, annual_hours')
         .eq('building_id', id)
         .maybeSingle(),
+      // Other contracts at the same physical building. Null site_id means
+      // nobody has said which building this is, so there is nothing to compare
+      // against — and `.eq(col, null)` matches nothing rather than everything,
+      // so the query is skipped entirely rather than made safe by luck.
       supabase
         .from('building_services')
         .select('service_type:service_types(name)')
@@ -136,6 +154,34 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
               {[building.address_line1, building.city, building.state, building.postal_code]
                 .filter(Boolean)
                 .join(', ') || '—'}
+            </Property>
+            <Property label="Physical building">
+              {building.site_id ? (
+                <>
+                  {building.tenancy === 'tenant'
+                    ? 'A tenant here'
+                    : building.tenancy === 'landlord'
+                      ? 'The landlord here'
+                      : 'Recorded'}
+                  {neighbours && neighbours.length > 0 && (
+                    <span className="text-muted-foreground">
+                      {' · also '}
+                      {neighbours.map((other, index) => (
+                        <span key={other.id}>
+                          {index > 0 && ', '}
+                          <Link href={`/buildings/${other.id}`} className="underline">
+                            {(other.account as { name: string } | null)?.name ?? other.name}
+                          </Link>
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Not recorded — set it on Edit if another customer is served at this address
+                </span>
+              )}
             </Property>
             <Property label="Property type">{building.property_type?.name ?? '—'}</Property>
             <Property label="Entity">{ENTITY_LABELS[building.entity]}</Property>

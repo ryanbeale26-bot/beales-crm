@@ -40,6 +40,8 @@ type Building = {
   health_score: 'healthy' | 'needs_attention' | 'at_risk' | null
   owner_id: string | null
   secondary_owner_id: string | null
+  site_id: string | null
+  tenancy: 'landlord' | 'tenant' | null
   lost_date: string | null
 }
 
@@ -52,6 +54,7 @@ export function BuildingForm({
   serviceTypes,
   selectedServiceTypeIds,
   currentMonthlyValue,
+  sites,
 }: {
   building?: Building
   accountId?: string
@@ -61,6 +64,7 @@ export function BuildingForm({
   serviceTypes: { id: string; name: string }[]
   selectedServiceTypeIds?: string[]
   currentMonthlyValue?: number | null
+  sites: { id: string; name: string; address: string | null; city: string | null; contracts: number }[]
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(saveBuilding, {})
   const [status, setStatus] = useState(building?.status ?? 'pending')
@@ -104,6 +108,47 @@ export function BuildingForm({
         </Field>
         <Field label="ZIP" htmlFor="postal_code">
           <Input id="postal_code" name="postal_code" defaultValue={building?.postal_code ?? ''} />
+        </Field>
+      </div>
+
+      {/* The physical building, as distinct from this contract at it.
+
+          One address can carry several contracts to different customers: Fox
+          Rock owns 90 Libbey Pkwy and buys a day porter, while South Shore
+          Health's Wound Center is a tenant in the same building with its own
+          contract. Pointing both at one site is what makes "how many buildings
+          do we service" answerable without double counting. */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Physical building"
+          htmlFor="site_id"
+          hint="Pick the shared record if another customer is already served at this address."
+        >
+          <Select id="site_id" name="site_id" defaultValue={building?.site_id ?? ''}>
+            <option value="">Not recorded</option>
+            <option value="__here__">Use the address above (reuses an existing one)</option>
+            {sites.map((site) => (
+              <option key={site.id} value={site.id}>
+                {site.name}
+                {site.city ? `, ${site.city}` : ''}
+                {site.contracts > 0
+                  ? ` — ${site.contracts} contract${site.contracts === 1 ? '' : 's'}`
+                  : ''}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field
+          label="We contract with"
+          htmlFor="tenancy"
+          hint="The landlord, or a tenant in their building."
+        >
+          <Select id="tenancy" name="tenancy" defaultValue={building?.tenancy ?? ''}>
+            <option value="">Not said</option>
+            <option value="landlord">The landlord / owner</option>
+            <option value="tenant">A tenant</option>
+          </Select>
         </Field>
       </div>
 

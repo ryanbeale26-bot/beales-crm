@@ -11,7 +11,7 @@
     "db:verify": "node scripts/verify-schema.mjs",
     "db:check-remote": "node scripts/check-remote.mjs",
     "user:create": "node scripts/create-user.mjs",
-    "sites:backfill": "node scripts/backfill-sites.mjs",
+    "sites:backfill": "node --conditions=react-server --import tsx scripts/backfill-sites.ts",
     "user:password": "node scripts/set-password.mjs",
     "granola:probe": "node --conditions=react-server --import tsx scripts/granola-probe.ts",
     "granola:backfill": "node --conditions=react-server --import tsx scripts/granola-backfill.ts"

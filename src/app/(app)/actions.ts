@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { findOrCreateSite } from '@/lib/sites'
 import { createClient } from '@/lib/supabase/server'
 
 export type FormState = { error?: string }
@@ -101,17 +102,37 @@ export async function saveBuilding(
       | null,
     owner_id: text(formData, 'owner_id'),
     secondary_owner_id: text(formData, 'secondary_owner_id'),
+    // Which side of the lease this contract is with. Named `tenancy` rather than
+    // anything with "owner" in it, because buildings.owner_id already means the
+    // Beale's person responsible.
+    tenancy: text(formData, 'tenancy') as 'landlord' | 'tenant' | null,
     lost_date: status === 'lost' ? (text(formData, 'lost_date') ?? new Date().toISOString().slice(0, 10)) : null,
   }
 
   const supabase = await createClient()
 
+  // The physical building. `__here__` means "whatever site is at this address,
+  // making one if there is not one yet" — which is the option that has to reuse
+  // rather than create, or one place ends up split across two site rows and
+  // v_site_contracts reports two sites with one contract each.
+  const siteChoice = text(formData, 'site_id')
+  let siteId: string | null = null
+  if (siteChoice === '__here__') {
+    const result = await findOrCreateSite(supabase, values)
+    if (result.error) return { error: `Could not work out the site: ${result.error}` }
+    siteId = result.siteId
+  } else {
+    siteId = siteChoice
+  }
+
+  const withSite = { ...values, site_id: siteId }
+
   let buildingId = id
   if (id) {
-    const { error } = await supabase.from('buildings').update(values).eq('id', id)
+    const { error } = await supabase.from('buildings').update(withSite).eq('id', id)
     if (error) return { error: `Could not save: ${error.message}` }
   } else {
-    const { data, error } = await supabase.from('buildings').insert(values).select('id').single()
+    const { data, error } = await supabase.from('buildings').insert(withSite).select('id').single()
     if (error) return { error: `Could not create the building: ${error.message}` }
     buildingId = data.id
   }

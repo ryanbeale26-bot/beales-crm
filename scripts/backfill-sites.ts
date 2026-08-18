@@ -22,6 +22,8 @@
 
 import { readFileSync } from 'node:fs'
 
+import { siteKey } from '@/lib/sites'
+
 const COMMIT = process.argv.includes('--commit')
 
 const env = Object.fromEntries(
@@ -34,29 +36,34 @@ const env = Object.fromEntries(
 const URL_ = env.NEXT_PUBLIC_SUPABASE_URL
 const ANON = env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-/** Street suffixes collapse to one token: "Rd" and "Road" are the same street,
- *  and "90 Libbey Pkwy" must not be a different place from "90 Libbey Pkwy.". */
-const SUFFIX = {
-  st: 'st', street: 'st', rd: 'rd', road: 'rd', dr: 'dr', drive: 'dr',
-  ave: 'ave', avenue: 'ave', blvd: 'blvd', boulevard: 'blvd',
-  pkwy: 'pkwy', parkway: 'pkwy', cir: 'cir', circle: 'cir',
-  ln: 'ln', lane: 'ln', ct: 'ct', court: 'ct', pl: 'pl', place: 'pl',
-  tpke: 'tpke', turnpike: 'tpke', way: 'way',
+/**
+ * Whether two records are the same place.
+ *
+ * Imported rather than reimplemented. This script and the building form both
+ * have to answer "is there already a site at this address", and two spellings of
+ * that rule would eventually disagree — at which point the form would join a
+ * site the script would have split, and one physical building would sit in two
+ * rows. `siteKey()` collapses "Pkwy"/"Parkway" through the same normaliser the
+ * Granola title matcher uses.
+ */
+type Row = {
+  id: string
+  name: string
+  address_line1: string | null
+  address_line2: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
+  square_footage: number | null
+  floors: number | null
+  site_id: string | null
+  account?: { name: string } | null
 }
 
-function addressKey(building) {
-  const line = (building.address_line1 ?? '').trim()
-  // "-" is what the importer left where the sheet said nothing.
-  if (line === '' || line === '-') return null
-  const city = (building.city ?? '').trim().toLowerCase()
-  const words = line
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => SUFFIX[w] ?? w)
-  if (words.length === 0) return null
-  return `${words.join(' ')}|${city}`
+type SiteRow = { id: string; name: string; address_line1: string | null; city: string | null }
+
+function addressKey(building: { address_line1?: string | null; city?: string | null }) {
+  return siteKey(building.address_line1 ?? null, building.city ?? null)
 }
 
 async function main() {
@@ -79,7 +86,7 @@ async function main() {
     Authorization: `Bearer ${auth.access_token}`,
     'content-type': 'application/json',
   }
-  const rest = (path, init) => fetch(`${URL_}/rest/v1/${path}`, { ...init, headers: H })
+  const rest = (path: string, init?: RequestInit) => fetch(`${URL_}/rest/v1/${path}`, { ...init, headers: H })
 
   const buildings = await rest(
     'buildings?select=id,name,address_line1,address_line2,city,state,postal_code,' +
@@ -91,6 +98,25 @@ async function main() {
     console.error('Could not read buildings:', JSON.stringify(buildings).slice(0, 300))
     console.error('\nIf this says site_id does not exist, the migration has not been applied.')
     process.exit(1)
+  }
+
+  // Sites that already exist, so a building added AFTER an earlier run joins the
+  // site at its address instead of getting a second one of its own. Without this
+  // the script is only correct the first time it is ever run — and the workflow
+  // it exists for is "add the tenant contracts as you find them", which means it
+  // gets run again.
+  const existingSites = await rest('sites?select=id,name,address_line1,city&deleted_at=is.null')
+    .then((r) => r.json())
+
+  if (!Array.isArray(existingSites)) {
+    console.error('Could not read sites:', JSON.stringify(existingSites).slice(0, 200))
+    process.exit(1)
+  }
+
+  const siteByKey = new Map<string, SiteRow>()
+  for (const site of existingSites) {
+    const key = addressKey(site)
+    if (key && !siteByKey.has(key)) siteByKey.set(key, site)
   }
 
   const already = buildings.filter((b) => b.site_id)
@@ -105,19 +131,32 @@ async function main() {
   }
 
   // Group. A building with no usable address is its own group, keyed by id.
-  const groups = new Map()
+  const groups = new Map<string, Row[]>()
   for (const b of todo) {
     const key = addressKey(b) ?? `nosite:${b.id}`
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key).push(b)
+    const group = groups.get(key) ?? []
+    group.push(b)
+    groups.set(key, group)
   }
 
   const shared = [...groups.values()].filter((g) => g.length > 1)
   const noAddress = todo.filter((b) => addressKey(b) === null)
+  const reused = [...groups.keys()].filter((key) => siteByKey.has(key))
 
   console.log(`\n${todo.length} buildings -> ${groups.size} sites`)
   console.log(`  ${shared.length} site(s) carry more than one contract`)
-  console.log(`  ${noAddress.length} building(s) have no address, so each gets its own site\n`)
+  console.log(`  ${noAddress.length} building(s) have no address, so each gets its own site`)
+  console.log(`  ${reused.length} join a site that already exists\n`)
+
+  if (reused.length > 0) {
+    console.log('JOINING AN EXISTING SITE — no new site is created for these:')
+    for (const key of reused) {
+      const site = siteByKey.get(key)
+      console.log(`  ${site?.name ?? key}`)
+      for (const b of groups.get(key) ?? []) console.log(`      ${b.name}   (${b.account?.name ?? 'no account'})`)
+    }
+    console.log('')
+  }
 
   if (shared.length > 0) {
     console.log('SITES WITH SEVERAL CONTRACTS — check these are really one place:')
@@ -142,10 +181,27 @@ async function main() {
   let sitesMade = 0
   let linked = 0
 
-  for (const [, group] of groups) {
+  for (const [key, group] of groups) {
+    // Already a site at this address: join it rather than making a second one.
+    // Two site rows for one building would make v_site_contracts report two
+    // sites with one contract each — exactly the double count `sites` exists to
+    // remove.
+    const existing = siteByKey.get(key)
+    if (existing) {
+      for (const b of group) {
+        const res = await rest(`buildings?id=eq.${b.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ site_id: existing.id }),
+        })
+        if (res.ok) linked += 1
+        else console.error(`  FAILED to link "${b.name}":`, (await res.text()).slice(0, 160))
+      }
+      continue
+    }
+
     // The richest row wins for each field: several contracts at one address
     // often means one of them was filled in and the others never were.
-    const pick = (field) => group.map((b) => b[field]).find((v) => v !== null && v !== '' && v !== '-') ?? null
+    const pick = (field: keyof Row) => group.map((b) => b[field]).find((v) => v !== null && v !== '' && v !== '-') ?? null
     const withAddress = group.find((b) => addressKey(b) !== null)
 
     const payload = {
@@ -171,6 +227,7 @@ async function main() {
       continue
     }
     sitesMade += 1
+    if (key) siteByKey.set(key, created[0])
 
     for (const b of group) {
       const res = await rest(`buildings?id=eq.${b.id}`, {
@@ -183,6 +240,9 @@ async function main() {
   }
 
   console.log(`Created ${sitesMade} sites and linked ${linked} of ${todo.length} buildings.`)
+  if (reused.length > 0) {
+    console.log(`${reused.length} of those joined a site that already existed.`)
+  }
   console.log('\nAudit rows are attributed to the ingest service profile, because that is')
   console.log('the account this script signs in as. Nothing else was changed: no contract')
   console.log('period moved, no value changed, no building was deleted.')

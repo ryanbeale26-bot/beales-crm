@@ -87,6 +87,24 @@ Weekend hours are stored as a **weekly total**, not per weekend day — the fiel
 
 Earlier versions of this file named `kbqivepqykccdyexgnhu` as InspectQA. That was wrong. InspectQA's tables (`inspections`, `inspection_sections`, `inspection_tasks`, `photos`, `missed_walks`, `organizations`) are in `beales-inspections`, verified in its table editor.
 
+**How a tenant is modelled, settled 2026-08-18 on the first real case.** Gener8 is a janitorial
+customer of Beale's *and* a tenant of Ciminelli Real Estate, who owns 181 and 187 Ballardvale Rd.
+Gener8 is its **own account**, with its own building row at 181 Ballardvale pointing at the same
+`site` as Ciminelli's, `tenancy = 'tenant'` against Ciminelli's `'landlord'`. The test is: **do they
+sign their own contract and pay their own invoice?** If yes it is an account, because account MRR is
+a roll-up of its buildings — filing Gener8 under Ciminelli would silently report money Gener8 pays
+as Ciminelli revenue, and Gener8 leaving would read as Ciminelli contracting. Same shape at 851
+Middle St, where suite 2100 (HTA) and suite 3500 (Brown University Medical) are two accounts at one
+site. A suite is only a *building* detail when the same customer pays for both.
+
+**A consequence worth knowing before adding a tenant:** the moment a second building exists at an
+address, the bare street phrase is claimed by two records and the Granola matcher calls it
+**ambiguous** rather than linking it — which is correct, since a note saying only "181 Ballardvale"
+genuinely could be either contract. The fix is one alias per tenant. And a one-word name like
+`Gener8` never becomes a derived phrase at all: the phrase rule needs two meaningful words, which is
+what stops "Beth" filing a hospice note under Beth Israel. Single-word identities always need a
+curated alias, by design.
+
 **Note for Phase 7:** InspectQA calls a serviced site a **`building`**, not a "site". The CRM's `inspectqa_site_id` column and `inspectqa_site_map` table map to InspectQA's `buildings.id`. It also has `organizations`, so it is multi-tenant — filter to Beale's own org when syncing.
 
 **3. InspectQA is read-only and authoritative for inspections and work orders.** Never write to it. Never rebuild inspection or work-order creation in the CRM. CRM queries always read the local mirror tables, so InspectQA being down never breaks the CRM.
@@ -422,6 +440,15 @@ The 261 left over are genuinely a person's job — vendors (`CleanSmarts`), vari
 | `src/app/api/cron/ingest/route.ts` | `maxDuration = 800`, constant-time `CRON_SECRET` check |
 | `src/app/(app)/review/*` | The queue, with bulk apply and dismiss |
 | `src/app/(app)/admin/ingest/*` | Source health, the domain map with candidates, and the relink upload |
+
+Sites got their screens after 7c, when the first real tenant account was created:
+
+| File | Job |
+|---|---|
+| `src/lib/sites.ts` | `siteKey()` — the one rule for "is this the same place", built on `normaliseAlias()`. `fetchSiteOptions()` and `findOrCreateSite()`, which **reuses before it creates** |
+| `src/app/(app)/buildings/building-form.tsx` | *Physical building* picker and *We contract with* (landlord / tenant) |
+| `src/app/(app)/buildings/[id]/page.tsx` | Shows the site, and links to the other contracts at the same address |
+| `scripts/backfill-sites.ts` | Was `.mjs` with its own copy of the suffix map. Now TypeScript importing `siteKey`, so the script and the form cannot disagree about what one place is — and it **joins an existing site** rather than making a second one at the same address |
 
 Phase 7c added:
 
@@ -1204,6 +1231,8 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-18 | Granola's match signal is the note **title**, not the attendee list | Measured against all 231 real notes: not one carries an external attendee address, because most are solo site inspections dictated into a phone. The participant matcher that mail uses resolves *nothing* on any of them. Titles carry building addresses and deal names instead. Matching is phrase-based, never single-word: a single-token version scored worse (40 clean matches vs 98) and filed a family hospice note under Beth Israel Lahey on the word "Beth". All nine personal notes in the corpus match nothing under the phrase rule, which is the privacy promise proved on real data rather than asserted |
 | 2026-08-18 | `--password` on an existing account was silently doing nothing | `create-user.mjs` fell through to a branch that updated the profile and never touched the auth record, then printed "Password unchanged" — while reporting success. It is the script the whole team gets onboarded with and all four remaining colleagues already have profile rows, so every one of them would have failed quietly. Fixed, and `npm run user:password` added: it prompts with the echo suppressed rather than taking the value as an argument, because arguments land in shell history and in `ps` |
 | 2026-08-17 | The fixture source exports the same shape the real connectors will | `graph.ts` and `granola.ts` swap in at one line in the route. That is what let every hard decision — RLS under a machine account, undo through `apply_gap_fill`, dedupe, idempotency, the privacy rule — be proved against the real database before a single credential existed. Its addresses are `.invalid`, so a fixture run against production creates nothing |
+| 2026-08-18 | **A tenant with its own contract is its own ACCOUNT, sharing a `site` with its landlord** | Settled on the first real case: Gener8 rents from Ciminelli at 181 Ballardvale and buys janitorial from Beale's directly. The test is whether they sign their own contract and pay their own invoice. Account MRR is a roll-up of its buildings, so filing a tenant under its landlord reports the tenant's money as the landlord's, and the tenant leaving reads as the landlord contracting — silently, and permanently in the revenue history |
+| 2026-08-18 | **`findOrCreateSite()` and the backfill both REUSE a site before creating one, through one shared `siteKey()`** | The backfill grouped only the buildings that had no site yet, so a tenant added after it ran would have got a second site at an address that already had one — and `v_site_contracts` would then report two sites with one contract each, which is the exact double count `sites` was added to remove. The script was converted from `.mjs` to TypeScript to import the same key function the form uses: two spellings of "is this the same place" would eventually disagree, and the disagreement would split one physical building across two rows |
 | 2026-08-18 | **A Granola note is matched on its TITLE, and the rule is containment rather than length** | Two shapes look identical to longest-wins and mean opposite things. `851 middle st suite 2100` contains `851 middle`, so the longer phrase is more specific and wins — which is how one address carrying a landlord contract and a tenant contract gets resolved. `Quincy Ambulatory and Plymouth Cordage Park` names two different places at two different points in the title, both true, and longest-wins would have silently picked one. So a phrase wholly inside another is discarded and what survives is counted by distinct record |
 | 2026-08-18 | **A street address must carry its NUMBER; a derived name phrase must be a PHRASE** | This is the rule the whole phase rests on and it is not negotiable. `199 Reedsdale Road` appears in a private sleep-study note; requiring the number is why it matches nothing. A single-word matcher filed a family hospice note under Beth Israel Lahey on the word "Beth". Curated aliases are exempt because a person typed them — "HTA" is three characters and is real — so curation, not length, is the safeguard |
 | 2026-08-18 | **A note matching nothing gets its id and its date and nothing else** | Ryan's call, and the strongest possible validation arrived from the data: the unmatched list contains a long note about a family member's suicidality, addiction and dismissal, which names Beale's. Had any phrase in it matched, its title and a 500-character summary would have been readable by four colleagues. A note matching TWO records keeps its title, because it is demonstrably about the business and one alias fixes it permanently |
