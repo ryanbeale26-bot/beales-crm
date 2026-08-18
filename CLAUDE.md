@@ -222,9 +222,14 @@ and `97 Libbey Pkwy, Weymouth` still under `South Coast Dermatology`.
 **Also fixed:** the Supabase **Site URL was missing its `https://` scheme**, so every magic link and
 password-recovery link landed on `pjcitahktwnawucoznhk.supabase.co/beales-crm.vercel.app` and died.
 Earlier versions of this file recorded the Site URL as configured — it was, but wrongly, and it
-would have broken the first sign-in for all four remaining colleagues. Defender Safe Links on
-Exchange Online also pre-opens recovery links and burns the one-time token, which is why
-`npm run user:password` exists.
+would have broken the first sign-in for all four remaining colleagues. **Ryan corrected it to
+`https://beales-crm.vercel.app` on 2026-08-18**, so magic links work again.
+
+Separately, **Defender Safe Links on Exchange Online pre-opens recovery links and burns the
+one-time token** before a human clicks, so a Supabase recovery email can arrive already expired
+(`otp_expired`). That is not retryable and it will affect all five accounts. `npm run user:password`
+exists to take email out of the loop entirely — it prompts for the password with the echo
+suppressed and calls `admin.updateUserById` locally.
 
 **Previously:** 7a shipped. The nightly ingest spine is built, tested end to end against the real
 database and committed; migration `20260818090000_ingest.sql` is **already applied** to
