@@ -831,6 +831,33 @@ async function main() {
   )
   check('Victor cannot change pay rates', victorWrite)
 
+  // --- ...and the audit log must not be the side door ------------------------
+  // Both rate tables are in the `audited` array, so every pay rate ever set is
+  // sitting in audit_log.new_values as raw jsonb. Until audit_log_select was
+  // tightened, is_member() was the only test on it, and the rate tables' own
+  // RLS was being walked around by their own history.
+  const RATE_HISTORY = `select count(*)::int as n from audit_log
+     where table_name in ('employee_compensation', 'employee_assignment_rates')`
+
+  const victorRateAudit = await asUser(db, VICTOR, () => db.query(RATE_HISTORY))
+  check('Victor cannot read pay rates through the audit log', victorRateAudit.rows[0].n === 0)
+
+  const ryanRateAudit = await asUser(db, RYAN, () => db.query(RATE_HISTORY))
+  check(
+    'Ryan can read the history of a pay rate',
+    ryanRateAudit.rows[0].n > 0,
+    `${ryanRateAudit.rows[0].n} rows`,
+  )
+
+  const victorOtherAudit = await asUser(db, VICTOR, () =>
+    db.query(`select count(*)::int as n from audit_log where table_name = 'accounts'`),
+  )
+  check(
+    'Victor can still read the history of everything else',
+    victorOtherAudit.rows[0].n > 0,
+    `${victorOtherAudit.rows[0].n} rows`,
+  )
+
   // ---------------------------------------------------------------------------
   console.log('\nAdmin-only reference data')
 
