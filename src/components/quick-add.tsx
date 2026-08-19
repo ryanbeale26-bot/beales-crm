@@ -3,7 +3,9 @@
 import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition } from 'react'
 
-import { logActivity, searchRecords, type SearchHit } from '@/app/(app)/activity/actions'
+import { logActivity } from '@/app/(app)/activity/actions'
+import { searchPlaces } from '@/app/(app)/search-action'
+import { type PlaceKind, type SearchHit } from '@/lib/search'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -50,7 +52,7 @@ export function QuickAdd({
 
   const [target, setTarget] = useState<QuickAddContext | null>(context ?? null)
   const [term, setTerm] = useState('')
-  const [hits, setHits] = useState<SearchHit[]>([])
+  const [hits, setHits] = useState<SearchHit<PlaceKind>[]>([])
   const subjectRef = useRef<HTMLInputElement>(null)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -63,7 +65,7 @@ export function QuickAdd({
       setHits([])
       return
     }
-    searchTimer.current = setTimeout(async () => setHits(await searchRecords(value)), 180)
+    searchTimer.current = setTimeout(async () => setHits(await searchPlaces(value)), 180)
   }
 
   function reset() {

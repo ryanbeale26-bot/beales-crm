@@ -1922,6 +1922,96 @@ async function main() {
   check('seed builds real contract history', seedHistory.rows[0].n === 2)
 
   // ---------------------------------------------------------------------------
+  console.log('\nGlobal search')
+
+  // Searched against the seed, which is the closest thing here to the real book:
+  // accounts "Demo Property Group" / "Example Health System" / "Sample Labs Inc",
+  // buildings "1 Example Plaza" / "2 Example Plaza" / "Sample Medical Park",
+  // contacts "Sample Manager" / "Example Director".
+  const byName = await asUser(db, RYAN, () =>
+    db.query(`select kind, label, sublabel, score from search_records('Sample Medical')`),
+  )
+  check(
+    'search finds a building by name',
+    byName.rows[0]?.kind === 'building' && byName.rows[0]?.label === 'Sample Medical Park',
+    JSON.stringify(byName.rows),
+  )
+  check(
+    'a building says which account and city it belongs to',
+    byName.rows[0]?.sublabel === 'Example Health System \u00b7 Quincy',
+    String(byName.rows[0]?.sublabel),
+  )
+
+  // The whole reason this is one query rather than four. Buildings sort first
+  // when scores tie, and both Example Plazas match -- but "Example" *starts* the
+  // account and the contact and only appears mid-name on the buildings, so both
+  // outrank them. Fanning out four queries could only ever interleave by a fixed
+  // type order, which is what the old three-way search did.
+  const ranked = await asUser(db, RYAN, () =>
+    db.query(`select kind, label, score from search_records('Example')`),
+  )
+  check(
+    'a stronger match outranks a building, though buildings sort first on a tie',
+    ranked.rows[0]?.kind === 'account' && ranked.rows[0]?.label === 'Example Health System',
+    JSON.stringify(ranked.rows.slice(0, 3)),
+  )
+  check(
+    'the buildings are still in the results, below it',
+    ranked.rows.some((r) => r.kind === 'building' && r.label === '1 Example Plaza'),
+    JSON.stringify(ranked.rows),
+  )
+
+  const exact = await asUser(db, RYAN, () =>
+    db.query(`select kind, label, score from search_records('Demo Property Group')`),
+  )
+  check(
+    'an exact name beats a name that merely starts with it',
+    exact.rows[0]?.kind === 'account' && exact.rows[0]?.score === 3,
+    JSON.stringify(exact.rows.slice(0, 3)),
+  )
+
+  const oneLetter = await asUser(db, RYAN, () =>
+    db.query(`select count(*)::int as n from search_records('E')`),
+  )
+  check('one letter is not a search', oneLetter.rows[0].n === 0)
+
+  const onlyAccounts = await asUser(db, RYAN, () =>
+    db.query(`select distinct kind from search_records('Example', array['account'])`),
+  )
+  check(
+    'asking for one kind returns only that kind',
+    onlyAccounts.rows.length === 1 && onlyAccounts.rows[0].kind === 'account',
+    JSON.stringify(onlyAccounts.rows),
+  )
+
+  // Somebody typing 90_Libbey is looking for an underscore, not for any
+  // character at all.
+  const literalWildcard = await asUser(db, RYAN, () =>
+    db.query(`select count(*)::int as n from search_records('%a')`),
+  )
+  check('a percent sign is searched for, not treated as a wildcard', literalWildcard.rows[0].n === 0)
+
+  await db.exec(`
+    update buildings set deleted_at = now()
+    where id = 'bbbbbbbb-0000-4000-8000-000000000004';
+  `)
+  const archived = await asUser(db, RYAN, () =>
+    db.query(`select count(*)::int as n from search_records('Placeholder Labs', array['building'])`),
+  )
+  check('an archived record is not found', archived.rows[0].n === 0)
+  await db.exec(`
+    update buildings set deleted_at = null
+    where id = 'bbbbbbbb-0000-4000-8000-000000000004';
+  `)
+
+  // SECURITY INVOKER, so the caller's own policies decide. A stranger holding
+  // the public key is not a member and every arm of the union comes back empty.
+  const stranger = await asUser(db, '99999999-9999-9999-9999-999999999999', () =>
+    db.query(`select count(*)::int as n from search_records('Example')`),
+  )
+  check('search returns nothing to somebody who is not a member', stranger.rows[0].n === 0)
+
+  // ---------------------------------------------------------------------------
   console.log(
     `\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${checks - failures}/${checks} checks\n`,
   )

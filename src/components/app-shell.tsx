@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 
+import { GlobalSearch } from '@/components/global-search'
 import { QuickAdd, type ActivityType } from '@/components/quick-add'
 import { cn } from '@/lib/utils'
 
@@ -185,6 +186,16 @@ export function AppShell({
             ☰
           </button>
           <span className="text-muted-foreground truncate text-sm md:hidden">Beale&rsquo;s CRM</span>
+
+          {/* Search lives in the header rather than beside the Log button. The
+              bottom-right corner belongs to Quick Add, and two floating circles
+              would cost that button the thing that makes it work. The header is
+              sticky, so this is one tap from anywhere, at any scroll position;
+              once it is open the palette is a full-height sheet with the input
+              on top, and the rest is thumb work. */}
+          <div className="ml-auto">
+            <GlobalSearch />
+          </div>
         </header>
 
         <main
