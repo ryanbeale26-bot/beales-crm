@@ -677,17 +677,23 @@ the proof:
 | | |
 |---|---|
 | **`GRAPH_CLIENT_ID`** | `60ed8f27-94ae-49e0-b4c6-931ed3099b90` |
-| **Mailbox scoping** | `Test-ApplicationAccessPolicy` returns **Granted** for `ryan@bealesllc.com` and **Denied** for `jbeale` — the check that stops the app reading ~150 mailboxes. This is the single most important thing in the whole setup and it is done |
+| **Mailbox scoping** | `Test-ApplicationAccessPolicy` returns **Granted** for `ryan@bealesllc.com` and **Denied** for `jbeale` |
+| **Admin consent** | Granted 2026-08-19. `Mail.Read` and `Calendars.Read`, both **Application** type, both showing *Granted for Beales LLC* in the portal |
 
-**Three things are still outstanding before a line of Graph code is written:**
+**The `ApplicationAccessPolicy` is load-bearing and nothing in the portal will warn you.** The
+two permissions are described on the consent screen as *"Read mail in all mailboxes"* and
+*"Read calendars in all mailboxes"*, and that is literally true — an application permission is
+tenant-wide by definition. The **only** thing confining this app to Ryan's mailbox is the
+`New-ApplicationAccessPolicy` command below. If that policy is ever removed, or is not
+re-applied after a tenant change, the nightly job silently gains all ~150 mailboxes and
+**nothing anywhere raises an error**. Re-run `Test-ApplicationAccessPolicy` against a second
+mailbox after any Entra work and confirm it still returns **Denied**.
+
+**Two things are still outstanding before a line of Graph code is written:**
 
 1. **`GRAPH_TENANT_ID`** — the Directory (tenant) id. Not a secret; ask Mike.
 2. **`GRAPH_CLIENT_SECRET`** — goes straight into `.env.local` and the Vercel env vars.
    **Never paste it into a chat or a commit.**
-3. **Confirmation that admin consent was granted** for `Mail.Read` and `Calendars.Read` as
-   **Application** permissions (not Delegated). Mike's reply listed this as item 3 and the
-   output was cut off. Success looks like the row reading *Granted for Beale's LLC* with a
-   green tick; without that click the app authenticates and can read nothing.
 
 Then **3–4 real samples**, as below.
 
@@ -1348,7 +1354,7 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 
 **Blocking Phase 7b (Microsoft Graph):**
 - [x] ~~The Entra app registration~~ — created 2026-08-19. Client id `60ed8f27-94ae-49e0-b4c6-931ed3099b90`. **Tenant id and client secret still needed.**
-- [ ] Admin consent granted for `Mail.Read` and `Calendars.Read` **application** permissions — Mike listed it and the output was cut off. Needs confirming.
+- [x] ~~Admin consent for `Mail.Read` and `Calendars.Read`~~ — granted 2026-08-19, both **Application** type, both reading *Granted for Beales LLC*.
 - [x] ~~The `New-ApplicationAccessPolicy` scoping~~ — done and proved: **Granted** for Ryan, **Denied** for jbeale.
 - [ ] **Does the Granola note↔calendar join actually work?** Ryan's meetings are in Outlook, but Granola reports a Google event id — so the two may be different calendars. One real sample settles it.
 - [ ] **3–4 real samples** — one inbound client email, one outbound, one calendar event with external attendees, one Granola note. No parser gets written before these arrive.
