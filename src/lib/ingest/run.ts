@@ -40,6 +40,10 @@ export type RunSummary = {
   alreadySeen: number
   errors: string[]
   stoppedEarly: boolean
+  /** Sources that came back short — the deadline hit mid-page, or a page cap
+   *  was reached. Granola has always reported this and nothing read it, so a
+   *  run that saw half of Granola looked identical to one that saw all of it. */
+  truncated: string[]
 }
 
 const EMPTY: RunSummary = {
@@ -54,6 +58,7 @@ const EMPTY: RunSummary = {
   alreadySeen: 0,
   errors: [],
   stoppedEarly: false,
+  truncated: [],
 }
 
 /** How long a suggestion waits before it stops asking. Ignoring the review
@@ -82,7 +87,7 @@ export async function runIngest(
     importBatchId?: string | null
   },
 ): Promise<RunSummary> {
-  const summary: RunSummary = { ...EMPTY, errors: [] }
+  const summary: RunSummary = { ...EMPTY, errors: [], truncated: [] }
   const dir = await loadDirectory(supabase)
   const types = await loadActivityTypes(supabase)
   const proposals: Proposal[] = []
@@ -93,7 +98,7 @@ export async function runIngest(
       break
     }
 
-    let batch: { items: RawItem[] }
+    let batch: { items: RawItem[]; cursor: string | null }
     try {
       batch = await source.fetch({ since: options.since, deadline: options.deadline })
     } catch (caught) {
@@ -102,6 +107,12 @@ export async function runIngest(
       )
       continue
     }
+
+    // A non-null cursor means the source stopped before the end of what it had.
+    // It is not an error and not a reason to retry — the mirror makes a re-seen
+    // item a timestamp touch — but a night that read half of Granola must not
+    // look like a night that read all of it.
+    if (batch.cursor) summary.truncated.push(source.name)
 
     for (const item of batch.items) {
       if (Date.now() > options.deadline) {
