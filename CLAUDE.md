@@ -195,7 +195,14 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
       change → commit → undo, matching on record **id**. All four scopes shipped: buildings,
       open deals, contacts, accounts. The gap census is now a Postgres view on the Import page,
       so nobody has to count the blanks by hand again. **The data entry itself is Ryan's to do**
-- [ ] **Phase 6** — Mobile polish, global search (Cmd-K), audit log, empty states, error handling, invite the team
+- [x] **Phase 6a** — Global search (⌘K / a header button), one Postgres `search_records()`
+      replacing the three-way fan-out behind Quick Add, plus two audit migrations: profiles
+      now carry an edit history, and the audit log stopped leaking pay rates
+- [ ] **Phase 6b** — The audit-log screens (a History section per record, an admin feed under
+      Settings), then the empty-state / error / 404 / loading pass, then invite the team.
+      **Split off from Phase 6 deliberately** — turning jsonb diffs into English needs
+      per-table field labels, value formatters and FK-uuid-to-name resolution across four
+      record pages plus a feed, which is its own session's work
 - [x] **Phase 7a** — The nightly ingest spine. Migration, the machine account, the cron route, the
       three confidence tiers, `next_steps`, the review queue, the domain map, and the workbook
       relink that gives 113 orphan activities a deal. Runs on fixtures; no external credentials
@@ -220,10 +227,64 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7c shipped. **Migrations `20260819090000_sites.sql`, `20260820090000_match_aliases.sql`
-and `20260820091000_alias_candidates_distinct.sql` are all applied** to `beales-crm`.
-`/admin/cleanup` is built but **still not deployed** — it exists only on Ryan's laptop until the
-next push. **Last session:** 2026-08-18.
+**Phase:** 6a shipped. **Last session:** 2026-08-19. Before that, 7c. **Every migration is
+applied to `beales-crm`, including the three from 6a** — `20260821090000_search.sql`,
+`20260821091000_profile_audit.sql` and `20260821092000_audit_rate_privacy.sql`.
+`/admin/cleanup` and everything from 6a are built but **not yet deployed** — they exist only on
+Ryan's laptop until the next push.
+
+### What changed on 2026-08-19: Phase 6a, global search
+
+⌘K on a laptop, a Search button in the header on a phone. It searches **buildings, accounts,
+contacts and deals** — deliberately not activities, because 800 rows of free text would drown the
+four things anybody navigates to.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **One Postgres function, not four PostgREST queries** | There were already TWO implementations of "find a record" — `searchRecords()` in `activity/actions.ts` fanning out three ilike queries for Quick Add, and a `q` filter on each of six list pages — and a palette would have made a third. Quick Add now calls the same function, so the two can never rank the same records differently |
+| **…and ranking across types is only possible in one query** | The old fan-out could only interleave three result sets by a fixed order, which is why buildings always came first however badly they matched. Now 3 = the field equals the term, 2 = starts with it, 1 = contains it, and an exact hit on an account name beats a partial hit on a building |
+| **`search_records()` is SECURITY INVOKER, and says so in a comment** | It is the default, written down so nobody "tidies" it to definer: the caller's own RLS decides what comes back, exactly as on the list pages. A definer function would hand every row to anyone holding the public key |
+| **Plain `ilike`, no `pg_trgm` and no tsvector** | Nothing in this schema installs an extension and `db:verify` runs a bare PGlite with none available, so reaching for one would take the whole schema out of test on the day it was added. Over 21 accounts and 46 buildings it is instant |
+| **LIKE metacharacters in the term are escaped** | Somebody typing `90_Libbey` is looking for an underscore, not for any character at all |
+| **Each kind is capped at 8, the whole result at 20** | Typing "st" must not fill the list with 40 buildings and hide the account somebody was after |
+| **The trigger is in the header, not a second FAB** | The bottom-right corner belongs to Quick Add, and its position is the whole reason logging is fast; two floating circles would cost it that. The header is sticky, so search is one tap at any scroll position, and it is `h-9` on a phone against the app's usual `h-7` because 28px is under every thumb-target guideline |
+| **Radix Dialog from the umbrella `radix-ui` package, not `cmdk`** | Focus trap, scrim, Escape and the aria wiring for no new dependency. `cmdk` would have been a new direct dep next to the umbrella pattern, and then needed re-styling anyway |
+| **A trap worth knowing: Radix only calls `onOpenChange` when RADIX closes the dialog** | Closing it from our own code — which is what pressing Enter on a result does — skips the reset, so the next ⌘K opened on the last search somebody ran. Every close goes through `onOpenChange` now. Found in the browser, not by reading |
+| **`/` opens it, but never while you are typing** | Guarded on `INPUT` / `TEXTAREA` / `SELECT` / `contentEditable`, tested by typing `north/river` into the deal filter box |
+| **Closed and lost records still appear** | Unlike the Granola phrase book, which admits only OPEN deals because a phrase from a deal closed two years ago would misfile tonight's note. Search is navigation, not matching: somebody looking up a past deal wants to find it |
+
+**The two audit migrations, each its own commit.** `profiles` now has the edit-history trigger the
+`audited` array left out, so a role change on the People screen is recorded rather than vanishing.
+
+And a **live leak was found and closed while planning the 6b screen**: `employee_compensation` and
+`employee_assignment_rates` are both audited, so every pay rate ever set was sitting in
+`audit_log.new_values` as raw jsonb — and `audit_log_select` tested only `is_member()`. Anyone who
+could sign in could read every rate change off `/rest/v1/audit_log`; the rate tables' RLS was being
+walked around by their own history. Fixed in the **policy**, not in the screen, because a screen
+only protects itself and a report, a CSV export or a request from a phone all go around it.
+**6b should still render the feed from an explicit allowlist of tables** — a denylist would start
+printing a new rate-carrying table the day somebody audits one, which is the `gap_fill_allows()`
+argument exactly.
+
+Where things live: `supabase/migrations/20260821090000_search.sql` (the function),
+`src/lib/search.ts` (`SearchHit`, `SEARCH_KINDS`, `PLACE_KINDS`, `hrefFor`, the single `rpc` call),
+`src/app/(app)/search-action.ts` (`search()` and `searchPlaces()` — a file at the route-group root
+exporting only actions creates no route), `src/components/global-search.tsx` (the palette).
+`activity/actions.ts` lost its 60-line fan-out.
+
+**Tested end to end against the real database** on 2026-08-19 under two temporary logins,
+`qa-phase6@bealesllc.com` (admin, rates) and `qa-phase6-field@bealesllc.com` (field, no rates),
+both now **deactivated, do not delete**. Proved: ⌘K and `/` open it and `/` does not while typing;
+"Libbey" returns all three live buildings each labelled with its account, and neither archived
+duplicate; "Fox Rock" returns the account above the closed-won deal of the same name; arrow keys
+and Enter navigate; Escape closes and the box reopens empty; Quick Add returns the same three
+records in the same order through the same function; at 375px the button is 83×36 at the top right
+and opens a full-height 375×812 sheet with the input focused. Company numbers before and after are
+identical — **21 accounts, 46 live buildings (43 active, 2 pending, 1 lost), 97 contacts, 800
+activities, 44 sites, 55 deals, MRR $46,086.33**, dashboard still reading "45 buildings under 19
+accounts". `audit_log` moved 2000 → 2002, which is the two QA profiles the new trigger recorded.
+`db:verify` **193 → 208**, and each of the three commits is independently green at 203 / 205 / 208.
+`typecheck`, `lint` and a cold `rm -rf .next && npm run build` all pass.
 
 **What changed on 2026-08-18 (third session): the Settings panel.** No schema change, no
 migration. Five screens moved: `/admin/import` and `/admin/cleanup` came **out** of the main
@@ -365,9 +426,16 @@ live buildings without one**, so the site backfill has run; **134 `match_aliases
 `ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
 corpus. Ryan confirms the four Vercel environment variables are set.
 
-1. Phase 7b when the IT consultant delivers the Entra app registration, then Phase 6.
-2. The gap-fill data entry, still the thing that makes every number in the app more truthful.
-3. `profiles` still has no audit trigger — see the Settings panel section above.
+1. **Phase 6b** — the audit-log screens, then the empty-state / error / 404 / loading pass, then
+   invite the team. It is the only unblocked phase. Two things it does NOT have to re-derive:
+   `(app)/error.tsx` **already covers** `/settings`, `/review` and `/admin/*` by nesting, so the
+   real gaps are a `not-found.tsx` (four detail pages call `notFound()` and get Next's unstyled
+   default), a `global-error.tsx`, no `loading.tsx` anywhere, and `/login` + `/setup` sitting
+   outside the group; and of the 12 pages with no `EmptyState`, eleven are `new`/`edit` forms or
+   always-populated index pages, leaving `contacts/[id]/page.tsx` as the only real omission.
+2. Phase 7b when the IT consultant delivers the Entra app registration.
+3. The gap-fill data entry, still the thing that makes every number in the app more truthful.
+4. ~~`profiles` has no audit trigger~~ — **done 2026-08-19**, its own migration and commit.
 
 **The "two duplicate Libbey records" are settled, and do NOT need archiving again.** This trap has
 now caught one session, so it is written down. There are five buildings at 90/97 Libbey Pkwy and
@@ -741,13 +809,15 @@ shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`)
 `npm run db:check-remote` confirms against the live database that a stranger holding the
 public key can read and write nothing.
 
-**Accounts: eleven profiles.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob
-Mulligan and Victor Melo. Brendan Mulligan is deactivated. Four QA logins —
-`qa-phase5@`, `qa-phase5b@`, `qa-phase7@` and `qa-phase7c@` — are **deactivated, do not delete**:
-they hold the audit rows for the 91 Longwater Drive correction and for the Phase 5b, 7a and 7c
-testing, and removing a profile would erase who made those changes.
+**Accounts.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
+Victor Melo. Brendan Mulligan is deactivated. Seven QA logins — `qa-phase5@`, `qa-phase5b@`,
+`qa-phase7@`, `qa-phase7c@`, `qa-settings@`, `qa-phase6@` and `qa-phase6-field@` — are
+**deactivated, do not delete**: they hold the audit rows for the 91 Longwater Drive correction and
+for the Phase 5b, 7a, 7c, Settings and 6a testing, and removing a profile would erase who made
+those changes. (Earlier versions of this file counted eleven profiles and named four QA logins;
+both numbers had already fallen behind, which is why this now names them rather than counting.)
 
-The tenth is **`ingest@bealesllc.com`, "Nightly ingest"** — `role = field`, `sees_rates = false`,
+The machine account is **`ingest@bealesllc.com`, "Nightly ingest"** — `role = field`, `sees_rates = false`,
 **`is_active = true` and `is_service = true`**. It is active because `is_member()` requires it and
 RLS refuses every write otherwise, which is precisely why it cannot be hidden by deactivating it
 the way Brendan is. `is_service` is what hides it from every owner picker instead. Do not delete
@@ -954,7 +1024,7 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **193 checks** |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **208 checks** |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1039,6 +1109,14 @@ Two things made it expensive: the failure is at build time so nothing about the 
 protects you, and **a failed build leaves the previous deployment serving happily**, so production
 looks fine while every push silently fails. The Phase 7a commit sat unpushed and undeployed for a
 day because of it. Check the plan before raising it.
+
+**The in-app preview browser needs `ArrowDown`, not `Down`, and its screenshots go stale.**
+`computer` with `text: 'Down'` reports "pressed Down" and the page receives nothing, so a keyboard
+feature looks broken when it works. `ArrowDown` / `ArrowUp` are the names that arrive. Screenshots
+also lag the live DOM by a beat, so **read the DOM to assert and use the screenshot only to look**
+— `javascript_tool` querying a `data-` attribute is the reliable check. And at 375px the pane
+refuses synthetic clicks outright: drive mobile through `element.click()` and native value setters
+rather than coordinates.
 
 **A PostgREST `select` must be a single string LITERAL, not a concatenation.** supabase-js parses
 the select string at the *type* level to work out the row type, and `'a, b, ' + 'c(d)'` widens to
@@ -1175,6 +1253,16 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       query, `fetchTodaysMeetings()`, rendered as the *Today* strip on the dashboard. It stays
       hidden until there is something in it. **It fills up when 7b has calendar credentials.**
 
+**Opened or closed by Phase 6a:**
+- [x] ~~`profiles` has no audit trigger~~ — done, its own migration and commit.
+- [x] ~~Would an audit screen leak a pay rate to Victor?~~ — it would have, and so did the
+      database already. Closed in `audit_log_select` rather than in any screen.
+- [ ] **Should search include employees?** Left out on purpose: Ryan named four kinds, and all
+      three employee tables are empty until Phase 4 answers where the data comes from. The
+      `kinds` argument makes it one arm of a union to add later.
+- [ ] **Nothing surfaces `score` yet.** The function returns it and `SearchHit` carries it; the
+      palette does not show why something matched. Worth revisiting only if somebody asks.
+
 **Review when convenient:**
 - [x] ~~`lead_sources` placeholders~~ — replaced 2026-08-13 with the eight real sources from the Source column. The five placeholders are **deactivated, not deleted**, because `lead_source_id` has no ON DELETE.
 - [ ] `loss_reasons` are still mostly placeholders — `Lost to competitor` was added (the only loss with evidence) and `Other` pushed last, but the middle of the list is invented. Ryan can now fix it himself in `/admin/reference`.
@@ -1308,6 +1396,13 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-18 | **The admin screens moved behind Settings, and `/review` moved into the main sidebar** | Import and Clean up sat in the nav where all five people saw them daily and four of them got "only an admin can do this" on every click — friction with no upside, on a team whose adoption is the whole risk. Ingest and Reference were the opposite problem: built, working, and reachable only by typing the URL. Review is neither: it is everyday work for any member, so it belongs in the nav — but hidden while the queue is empty, because a permanent "Review 0" is the same dead number this app refuses everywhere else |
 | 2026-08-18 | **Your own password is changeable in the app; anybody else's is not** | The line is not "what is convenient", it is **which key it needs**. `updateUser({ password })` works on your own session with the anon key. Creating an account and resetting somebody else's both need the service role key, which bypasses every RLS policy and is deliberately absent from Vercel — so those two stay terminal jobs, and the screen prints the command rather than offering a form that could never work. A form that cannot work is worse than no form |
 | 2026-08-18 | **A profile edit is refused in the server action, not merely disabled in the UI** | Three refusals: self-demotion, self-deactivation, and deactivating a service account. The first is the dangerous one — admin is the only role that can reach the People screen, so one careless save on your own row locks the company out of Import, Clean up, Reference and People at once, with no way back that does not involve the terminal. Greying out a `<select>` is a hint; the guard has to be where the write happens |
+| 2026-08-19 | **Global search is one Postgres function, not four PostgREST queries** | Two reasons, and the second is the one that decides it. There were already two implementations of "find a record" — the three-way fan-out behind Quick Add and a filter box on six list pages — so a palette would have been the third, and Quick Add now calls the same function rather than its own. But separate queries also cannot rank against each other: three result sets can only be interleaved by a fixed type order, which is why the old search always put buildings first however badly they matched. One query lets an exact hit on an account name beat a partial hit on a building, which is what somebody typing a name expects |
+| 2026-08-19 | `search_records()` is **SECURITY INVOKER**, and the comment says so | It is the default, so the note exists to stop a future session "tidying" it to definer. Invoker means the caller's own RLS decides, exactly as on the list pages, and the function cannot show anybody a row they could not already read. Definer would hand every row to anyone holding the public key |
+| 2026-08-19 | Plain `ilike` with escaped metacharacters, **no `pg_trgm`** | Nothing in this schema installs an extension and `db:verify` runs a bare PGlite with none available, so adding one would take the whole schema out of test the day it went in — for a book of 21 accounts and 46 buildings where ilike is already instant. Escaping `%` and `_` is what makes `90_Libbey` a search for an underscore rather than for any character |
+| 2026-08-19 | Search sits in the **header**, and Quick Add keeps the bottom-right corner alone | Two floating circles compete, and Quick Add's dominance of that corner is the reason logging is fast — the one thing this app cannot afford to slow down. The header is sticky, so search is one tap at any scroll position, and the button is `h-9` on a phone rather than the app's usual `h-7` because 28px is under every thumb-target guideline |
+| 2026-08-19 | Closed and lost records **are** searchable, unlike the Granola phrase book | Opposite decisions from the same facts, for opposite jobs. A phrase from a deal closed two years ago would misfile tonight's note, so matching admits only open deals. Search is navigation: somebody looking up a past deal is looking for the past deal |
+| 2026-08-19 | **The audit log's own policy now tests `can_see_rates()`, not just `is_member()`** | Found while planning the 6b screen, and it was a live leak with no screen involved: both rate tables are audited, so every pay rate ever set sat in `audit_log.new_values` as plain jsonb readable by anyone who could sign in. The rate tables' RLS was being walked around by their own history. Fixed in the policy rather than the renderer, because a screen only protects itself — a report, a CSV export or a request straight from a phone all go around it. The 6b feed should still render from an explicit **allowlist** of tables, since a denylist would start printing a new rate-carrying table the day somebody audits one |
+| 2026-08-19 | Phase 6 was **split into 6a and 6b** rather than half-built | Ryan asked to be pushed back on if it was more than one session, and it is: turning jsonb diffs into English needs per-table field labels, value formatters and FK-uuid-to-name resolution across four record pages plus an admin feed. Search finished and tested beats three things started |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
