@@ -86,7 +86,29 @@ async function main() {
     Authorization: `Bearer ${auth.access_token}`,
     'content-type': 'application/json',
   }
-  const rest = (path: string, init?: RequestInit) => fetch(`${URL_}/rest/v1/${path}`, { ...init, headers: H })
+  // Headers are MERGED, not replaced. `{ ...init, headers: H }` looks harmless
+  // and silently discards any header the caller passed — which is exactly what
+  // happened to `Prefer: return=representation` on the site insert below: without
+  // it PostgREST returns an empty body, and .json() died on it with
+  // "Unexpected end of JSON input" after the row had already been created.
+  const rest = (path: string, init?: RequestInit) =>
+    fetch(`${URL_}/rest/v1/${path}`, {
+      ...init,
+      headers: { ...H, ...((init?.headers as Record<string, string> | undefined) ?? {}) },
+    })
+
+  /** Parse a PostgREST reply without assuming there is one. An empty body is a
+   *  fact worth reporting, not an exception to be thrown from inside undici. */
+  const readJson = async (response: Response) => {
+    const body = await response.text()
+    if (!response.ok) return { ok: false as const, detail: body.slice(0, 200) || `HTTP ${response.status}` }
+    if (body === '') return { ok: false as const, detail: 'the server returned an empty body' }
+    try {
+      return { ok: true as const, data: JSON.parse(body) }
+    } catch {
+      return { ok: false as const, detail: `could not read the reply: ${body.slice(0, 120)}` }
+    }
+  }
 
   const buildings = await rest(
     'buildings?select=id,name,address_line1,address_line2,city,state,postal_code,' +
@@ -215,24 +237,28 @@ async function main() {
       floors: pick('floors'),
     }
 
-    const created = await rest('sites', {
-      method: 'POST',
-      headers: { ...H, Prefer: 'return=representation' },
-      body: JSON.stringify(payload),
-    }).then((r) => r.json())
+    const result = await readJson(
+      await rest('sites', {
+        method: 'POST',
+        headers: { Prefer: 'return=representation' },
+        body: JSON.stringify(payload),
+      }),
+    )
 
-    if (!Array.isArray(created) || !created[0]?.id) {
-      console.error(`  FAILED to create site for "${payload.name}":`,
-        JSON.stringify(created).slice(0, 200))
+    if (!result.ok || !Array.isArray(result.data) || !result.data[0]?.id) {
+      console.error(
+        `  FAILED to create site for "${payload.name}": ${result.ok ? 'unexpected reply' : result.detail}`,
+      )
       continue
     }
+    const createdSite = result.data[0] as SiteRow
     sitesMade += 1
-    if (key) siteByKey.set(key, created[0])
+    if (key) siteByKey.set(key, createdSite)
 
     for (const b of group) {
       const res = await rest(`buildings?id=eq.${b.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ site_id: created[0].id }),
+        body: JSON.stringify({ site_id: createdSite.id }),
       })
       if (res.ok) linked += 1
       else console.error(`  FAILED to link "${b.name}":`, (await res.text()).slice(0, 160))
