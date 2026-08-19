@@ -24,6 +24,7 @@
  * that will actually run at 3am — granted for one mailbox, denied for another.
  */
 
+import { graphTime } from '@/lib/ingest/graph'
 import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 
 import { readEnvLocal, requireEnv, signInAsIngest } from './granola-env'
@@ -222,7 +223,55 @@ function selftest(): number {
   check('an empty string says so rather than looking absent', redactString('') === '"" (empty)')
   check('an absent field is distinguishable from a null one', describe(undefined) === 'absent' && describe(null) === 'null')
 
-  console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${11 - failures}/11 checks\n`)
+  // --- The most dangerous line in graph.ts -----------------------------------
+  // Graph sends a calendar time with the zone in a SIBLING field and no marker
+  // on the string, so new Date() reads it as local. In Boston that is every
+  // meeting four or five hours out, silently, for ever.
+  console.log('')
+  check(
+    'a zone-less Graph time is read as UTC, not as local',
+    graphTime('2026-08-06T15:00:00.0000000', 'UTC') === '2026-08-06T15:00:00.000Z',
+    graphTime('2026-08-06T15:00:00.0000000', 'UTC'),
+  )
+  check(
+    'seven fractional digits do not defeat it',
+    graphTime('2026-08-11T13:30:45.1234567', 'UTC') === '2026-08-11T13:30:45.123Z',
+    graphTime('2026-08-11T13:30:45.1234567', 'UTC'),
+  )
+  check(
+    'a time that already carries Z is left alone',
+    graphTime('2026-08-19T19:47:16Z') === '2026-08-19T19:47:16.000Z',
+    graphTime('2026-08-19T19:47:16Z'),
+  )
+  check(
+    'an explicit offset is honoured rather than overwritten',
+    graphTime('2026-08-19T15:47:16-04:00') === '2026-08-19T19:47:16.000Z',
+    graphTime('2026-08-19T15:47:16-04:00'),
+  )
+  check(
+    'a non-UTC zone is refused rather than guessed at',
+    (() => {
+      try {
+        graphTime('2026-08-06T15:00:00.0000000', 'Eastern Standard Time')
+        return false
+      } catch {
+        return true
+      }
+    })(),
+  )
+  check(
+    'nonsense is refused rather than becoming an Invalid Date',
+    (() => {
+      try {
+        graphTime('not a time', 'UTC')
+        return false
+      } catch {
+        return true
+      }
+    })(),
+  )
+
+  console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${17 - failures}/17 checks\n`)
   return failures
 }
 

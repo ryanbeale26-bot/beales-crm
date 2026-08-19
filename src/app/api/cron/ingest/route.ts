@@ -2,9 +2,11 @@ import { timingSafeEqual } from 'node:crypto'
 
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { cronSecret, granolaApiKey, hasGranolaEnv } from '@/lib/env'
+import { cronSecret, granolaApiKey, graphCredentials, hasGranolaEnv, hasGraphEnv } from '@/lib/env'
 import { fixtureSource } from '@/lib/ingest/fixtures'
 import { makeGranolaSource } from '@/lib/ingest/granola'
+import { makeGraphSource } from '@/lib/ingest/graph'
+import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 import { runIngest } from '@/lib/ingest/run'
 import { failRun, finishRun, startRun, type RunHandle } from '@/lib/ingest/runs'
 import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
@@ -85,7 +87,15 @@ export async function GET(request: NextRequest) {
     supabase = await createIngestClient()
     const actorId = await ingestProfileId(supabase)
 
-    const sources = ['fixtures', ...(hasGranolaEnv() ? ['granola'] : [])]
+    // Which mailboxes to ASK for. The access policy in Exchange decides which
+    // we actually get; anyone outside the ingest group answers 403 and is
+    // counted, not raised.
+    const mailboxes = hasGraphEnv() ? await fetchMailboxes(supabase) : []
+    const sources = [
+      'fixtures',
+      ...(hasGranolaEnv() ? ['granola'] : []),
+      ...(hasGraphEnv() ? ['graph'] : []),
+    ]
 
     // Opened here rather than at the top, because writing it needs the session
     // that signing in just produced. A sign-in failure therefore leaves NO row
@@ -95,16 +105,18 @@ export async function GET(request: NextRequest) {
     handle = await startRun(supabase, sources)
 
     const summary = await runIngest(supabase, {
-      // Granola is real as of 7c. The fixtures stay wired up beside it: their
-      // addresses are .invalid, so they create nothing, and they are how the
-      // mail path is exercised until 7b has credentials. 7b adds graph.ts here
-      // and nothing else changes, because every source exports one shape.
+      // Three real sources now. The fixtures stay wired up beside them: their
+      // addresses are .invalid, so they create nothing, and they are the one
+      // way to exercise the mail path on a machine with no credentials at all.
       sources: [
         { name: 'fixtures', fetch: fixtureSource },
         // Skipped rather than thrown when the key is absent: a machine with no
         // Granola key should still run the rest of the job.
         ...(hasGranolaEnv()
           ? [{ name: 'granola', fetch: makeGranolaSource(granolaApiKey()) }]
+          : []),
+        ...(hasGraphEnv()
+          ? [{ name: 'graph', fetch: makeGraphSource(graphCredentials(), mailboxes) }]
           : []),
       ],
       since: new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString(),
