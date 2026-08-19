@@ -287,8 +287,12 @@ family member's health and employment, which names Beale's and would have been r
 colleagues had it matched. That is the "store nothing but the id and the date" rule earning its
 keep on real data rather than in the abstract.
 
-**Live counts are exactly as they were before the session: 20 accounts, 39 buildings, 97 contacts,
-55 deals, 667 activities, 11 open contract periods, MRR $47,148.** The backfill was committed,
+**Live counts, measured 2026-08-19: 21 accounts, 46 live buildings (43 active, 2 pending, 1 lost),
+97 contacts, 800 activities, 44 sites, MRR $46,086.33.** Two accounts have no building yet, which
+is why the dashboard reads "45 buildings under 19 accounts" — the tile counts buildings that are
+not lost, and accounts that have one. The book has grown since Phase 7c; earlier figures in this
+file (20 accounts, 39 buildings, 667 activities, MRR $47,148) are the 7c-era numbers and are no
+longer current. The backfill was committed,
 inspected, undone, re-committed and undone again to prove reversibility both ways; the mirror was
 then emptied. `import_batches` is **9, not 7** — two rolled-back rows of test residue, the same
 ignorable kind the 5b session left.
@@ -354,16 +358,34 @@ These are data, not code, and none of them is safe to guess at:
 
 ### Still to do, in this order
 
-1. **Archive the two records at `/admin/cleanup`**, then `npm run sites:backfill -- --commit`.
-   Success is `Created 36 sites and linked 39 of 39 buildings.`
-2. **`npm run granola:probe`**, add aliases at `/admin/ingest`, probe again. Nine aliases took clean
-   matches from 36 to 98; the 106 that still match nothing include perhaps a dozen recurring
-   business shapes worth one alias each.
-3. **`npm run granola:backfill -- --commit`** when the list looks right. It prompts for an admin
-   email and password. Undo is the button at the bottom of `/admin/import`.
-4. **The Vercel environment variables**, or the cron still runs nowhere: `INGEST_USER_EMAIL`,
-   `INGEST_USER_PASSWORD`, `CRON_SECRET`, `GRANOLA_API_KEY`.
-5. Phase 7b when the IT consultant delivers, then Phase 6.
+**Items 1–4 of the old list are DONE.** Ryan finished them between 2026-08-18 and 2026-08-19, and
+this section went on telling later sessions to do them again — which is exactly how a stale
+checklist wastes a session. Measured against the live database on 2026-08-19: **44 sites and 0
+live buildings without one**, so the site backfill has run; **134 `match_aliases` and 231
+`ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
+corpus. Ryan confirms the four Vercel environment variables are set.
+
+1. Phase 7b when the IT consultant delivers the Entra app registration, then Phase 6.
+2. The gap-fill data entry, still the thing that makes every number in the app more truthful.
+3. `profiles` still has no audit trigger — see the Settings panel section above.
+
+**The "two duplicate Libbey records" are settled, and do NOT need archiving again.** This trap has
+now caught one session, so it is written down. There are five buildings at 90/97 Libbey Pkwy and
+they are not five copies of one thing:
+
+| | Account | State | What it is |
+|---|---|---|---|
+| `90 Libbey` | South Shore Health | **archived** | Import duplicate, batch `769c4d19`, 2026-08-13 |
+| `97 Libbey Pkwy, Weymouth` | South Coast Dermatology | **archived** | Import duplicate, same batch |
+| `Wound Center (90 Libbey Pkwy, Weymouth)` | South Shore Health | live | The **tenant** contract |
+| `90 Libbey` | Fox Rock Properties | live | The **landlord** contract, created by hand 2026-08-18 |
+| `97 Libbey` | Fox Rock Properties | live | Created by hand 2026-08-18 |
+
+The two live Fox Rock rows share a name and an address with the two archived ones and are a
+different thing entirely — they are the landlord side of exactly the case the `sites` table was
+added for, and the Fox Rock `90 Libbey` shares its `site_id` with the Wound Center as it should.
+**Do not archive them.** Judge a Libbey record by its ACCOUNT and its `created_at`, never by its
+name.
 
 **Also fixed on 2026-08-18:** the Supabase **Site URL was missing its `https://` scheme**, so every
 magic link and password-recovery link landed on
