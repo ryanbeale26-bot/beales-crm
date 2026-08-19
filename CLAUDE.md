@@ -205,8 +205,10 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
       three confidence tiers, `next_steps`, the review queue, the domain map, and the workbook
       relink that gives 113 orphan activities a deal. Runs on fixtures; no external credentials
       needed or used
-- [ ] **Phase 7b** — Microsoft Graph: mail + calendar, delta tokens, the multi-mailbox loop,
-      `ingest_runs`. **Blocked on the app registration and 3–4 real samples**
+- [~] **Phase 7b** — Microsoft Graph. **The groundwork is done**: `ingest_runs`, the run-health
+      screen, the mailbox list and the Graph credential accessors. **`graph.ts` itself is still
+      blocked** on `GRAPH_TENANT_ID`, `GRAPH_CLIENT_SECRET` and 3–4 real samples. Note there are
+      **no delta tokens and there will not be** — see the decision log
 - [x] **Phase 7c** — Granola. The title matcher, `match_aliases`, `profile_email_aliases`,
       `granola.ts`, the admin screens, and the probe/backfill scripts. Shipped and tested end to
       end against the real database. **Two things are Ryan's to run:** archive the two duplicate
@@ -225,8 +227,59 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 6b shipped — Phases 1–6 are complete. **Last session:** 2026-08-19 (6a and 6b, same
-day). **Every migration is applied to `beales-crm`**, including `20260821090000_search.sql`,
+**Phase:** 7b groundwork shipped; Phases 1–6 complete. **Last session:** 2026-08-19 (6a, 6b and
+the 7b groundwork, same day).
+
+### What changed on 2026-08-19: the 7b groundwork
+
+Not the connector — the half of it that does not depend on seeing a real Graph message. Two
+things came out of reading the 7a spine, and the first is the reason this session exists:
+
+**Nothing had ever recorded whether the nightly job ran.** The only trace was the JSON the route
+returns and Vercel's own cron log. `/admin/ingest` reported the last time something was
+*ingested*, which only moves when there is something to ingest — so a quiet week and a dead cron
+were indistinguishable, as were a failed sign-in and a rotated Granola key. That was live for the
+Granola ingest already running in production.
+
+**`runIngest` was throwing the source's `cursor` away.** Granola has always returned
+`cursor: 'truncated'` when it stopped short, with a comment saying a short run must be "visible
+rather than silent", and `run.ts` destructured only `{ items }`. The signal existed and went
+nowhere.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **The run row is written when the run STARTS, not when it finishes** | A run killed mid-flight — a timeout, the platform pulling the plug — leaves a row saying it never finished, which is exactly the failure the table exists to surface. A row written only on success is missing precisely when it matters. `ok` null plus a `started_at` older than twice `maxDuration` is "died"; `ok` null and recent is "running now" |
+| **A failed SIGN-IN cannot be recorded, and the screen says so** | Writing the row needs the session that just failed. So that case leaves no row at all — the same shape as the cron never firing. Both are caught by **staleness**: `/admin/ingest` flags when nothing has run for over 26 hours (it runs twice a night) and points at the Vercel log. Staleness is the load-bearing signal, not the rows |
+| **`sources text[]` records which connectors were switched on** | "Granola was not configured" and "Granola found nothing" are different facts and would otherwise both read as zero. Proved by running with the key blanked: the row says `{fixtures}` rather than `{fixtures,granola}` |
+| **No delete policy on `ingest_runs`, not even for an admin** | Nothing in the app removes a run and a history of failures is worth more than a tidy table. Asserted in `db:verify` |
+| **Not audited** | Machine-written twice a night. Auditing it would grow `audit_log` faster than the thing it records — the same call `ingested_items` made |
+| **There are NO delta tokens and no cursor table, deliberately** | The original 7b sketch had them. The existing design already refuses: *"idempotency lives in `ingested_items`, which is one fact rather than two that can disagree"*. A durable cursor would be that second fact. Mail does not need it — an email never changes, and `$filter` on a received date plus a two-day lookback is enough for a nightly job. Calendar events *do* change, and a rolling window re-read handles that because the mirror makes a re-seen item a timestamp touch |
+| **No `ingest_mailboxes` table either** | The Entra security group decides who is readable, and the app cannot read that group: `Group.Read.All` was never consented and would let this client id enumerate every group in the company. So the app asks for all five active non-service profiles and lets the **ApplicationAccessPolicy** answer — a 403 is recorded as "not in the ingest group", not as a fault. The policy stays the boundary; the list only says who we try |
+
+Where things live: `supabase/migrations/20260823090000_ingest_runs.sql`,
+`src/lib/ingest/runs.ts` (`startRun` / `finishRun` / `failRun`, called from the **route** so a
+directory-load failure is still recorded), `src/lib/ingest/run-health.ts` (`fetchRunHealth`,
+`died`, the 26-hour staleness rule), `src/lib/ingest/mailboxes.ts`, and `graphCredentials()` /
+`hasGraphEnv()` in `src/lib/env.ts`. The *Last run* panel is at the top of `/admin/ingest`.
+
+**Tested against the real database** by running the job by hand four times, under
+`qa-phase6b@bealesllc.com` (reactivated for the test, now **deactivated again, do not delete**).
+Proved: 401 without the secret; a real run recorded clean at 3.7s over `{fixtures,granola}`; an
+identical second run created nothing (8 seen, 0 new, 4 already known); two runs with the Granola
+key blanked recorded `{fixtures}` alone; and the stale banner fired reading *"Nothing has run for
+40 hours"* after backdating the rows, which were then restored. `db:verify` **216 → 223**,
+typecheck, lint and a cold build all pass.
+
+**One thing that moved and should stay moved:** running the job by hand did tonight's real
+Granola ingest about twelve hours early, so **activities went 800 → 804** — four site
+inspections from 2026-08-19 (Cancer Center, 797 Main St, Wound Center, 187 Ballardvale), each
+matched to both an account and a building. Real data, not test residue. `ingested_items` 233 →
+237 for the same reason, and `ingest_runs` holds the four test runs. Accounts, buildings,
+contacts, sites, deals and **MRR $46,086.33** are all unchanged.
+
+**Also confirmed while testing: the production cron IS firing.** The two `.invalid` stranger rows
+in the mirror are stamped 07:08 UTC on 2026-08-19, which is the real nightly run, not a local
+one. **Every migration is applied to `beales-crm`**, including `20260821090000_search.sql`,
 `20260821091000_profile_audit.sql`, `20260821092000_audit_rate_privacy.sql` and
 `20260822090000_audit_recent.sql`. 6a is pushed and deployed; **6b is committed but not yet
 pushed**.
@@ -1098,7 +1151,7 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **216 checks** |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **223 checks** |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1483,6 +1536,10 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-19 | The record's name comes from the entry's **own snapshot**, never a lookup | A record archived since still reads by name rather than as a uuid, and it costs no join. The uuids inside a diff do need looking up, and `src/lib/reference.ts` is the wrong tool for it: `getOwners()` hides service accounts, which wrote every ingest row, and the rest filter `is_active`, so a retired stage or competitor would render as a dash. History has to name what was true at the time |
 | 2026-08-19 | The feed **hides spreadsheet imports by default and names the number** | 1,544 of 1,855 entries are one import. Showing them makes the first page fifty identical rows and the feed reads as broken; hiding them silently is the dead-number mistake this app refuses everywhere else. Imports already have their own screen and their own Undo, so the default is what people did by hand — with the count of what is not shown, one click away |
 | 2026-08-19 | Two `not-found.tsx` files, not one | The eight `notFound()` callers all live inside `(app)`, so theirs keeps the sidebar — after a dead link the fastest thing is the nav you were already using. A URL matching no route at all has no shell and no session, so that one carries the logo and its own way home |
+| 2026-08-19 | **The nightly job records every run, and the row is opened when the run STARTS** | Nothing recorded this before, so a quiet week and a dead cron were the same picture — "last seen" only moves when something is ingested. Opening the row first is what makes a killed function visible: a run that never closed its own row is a run the platform stopped, and a row written only on success would be missing exactly when it mattered |
+| 2026-08-19 | …and **staleness**, not the rows, is the load-bearing signal | A failed sign-in cannot write a row at all, because writing needs the session that failed — and a cron that never fires writes nothing either. One mechanism catches both: nothing having run for over 26 hours, on a job that runs twice a night. The screen says this out loud rather than implying the absence of a row means nothing happened |
+| 2026-08-19 | **No delta tokens, and no cursor table** | The original 7b sketch had both. The existing design already refused: idempotency lives in `ingested_items`, "one fact rather than two that can disagree", and a durable cursor is precisely that second fact. Mail does not need one — an email never changes, so a received-date filter plus a two-day lookback is enough. Calendar events do change, and a rolling re-read handles that because the mirror turns a re-seen item into a timestamp touch |
+| 2026-08-19 | **No table of mailboxes: ask for all five and let the access policy answer** | The Entra group is the source of truth and the app cannot read it — `Group.Read.All` was never consented, and asking for it would let this client id enumerate every group in the company, on a registration whose whole design is minimum access. A refusal is recorded as "not in the ingest group" rather than as an error, which makes group membership visible in the app without duplicating it. The cost is stated rather than discovered: the day somebody joins that group their client mail starts being logged, with no further decision taken in the app |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
