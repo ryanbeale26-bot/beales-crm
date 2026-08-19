@@ -739,6 +739,37 @@ async function main() {
   )
   check('an edit that changes nothing is not logged', auditAfterNoop.rows[0].n === 1)
 
+  // --- Who changed a profile -------------------------------------------------
+  // The `audited` array left profiles out, which was fair while roles were only
+  // ever set from the terminal. The People screen made a role change something
+  // an admin does in a browser, and that is the edit most worth a history.
+  await db.exec(`
+    set local test.user_id = '${RYAN}';
+    update profiles set full_name = 'Victor Melo' where id = '${VICTOR}';
+  `)
+  const profileAudit = await db.query(`
+    select changed_by, old_values, new_values from audit_log
+    where table_name = 'profiles' and action = 'update' and record_id = '${VICTOR}'
+    order by id
+  `)
+  // Two updates so far: the role this script set at the top, and the rename
+  // just above. The role change is the one this trigger exists for.
+  check(
+    'changing a role is recorded',
+    profileAudit.rows.some(
+      (r) => r.old_values?.role === 'leadership' && r.new_values?.role === 'field',
+    ),
+    JSON.stringify(profileAudit.rows.map((r) => r.new_values?.role)),
+  )
+  const rename = profileAudit.rows.at(-1)
+  check(
+    'the profile entry keeps who did it and what moved',
+    String(rename?.changed_by) === RYAN &&
+      rename?.old_values?.full_name === 'Victor Test' &&
+      rename?.new_values?.full_name === 'Victor Melo',
+    JSON.stringify(rename),
+  )
+
   // ---------------------------------------------------------------------------
   console.log('\nPay rate access')
 
