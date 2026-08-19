@@ -48,6 +48,20 @@ const BASE_URL = 'https://public-api.granola.ai/v1'
  */
 const MIN_INTERVAL_MS = 200
 
+/**
+ * A ceiling on any single request.
+ *
+ * `fetch` has no default timeout, so without this one stalled connection hangs
+ * the whole job — it would sit there until Vercel killed the function at 300
+ * seconds, and a killed function cannot write its own error down. Found when a
+ * probe run stopped dead on this call and looked, from the outside, exactly
+ * like a crash.
+ *
+ * Twenty seconds is far beyond anything this API does normally, so hitting it
+ * means something is wrong rather than slow.
+ */
+const REQUEST_TIMEOUT_MS = 20_000
+
 let nextAllowedAt = 0
 
 async function throttled(url: string, apiKey: string): Promise<Response> {
@@ -56,12 +70,25 @@ async function throttled(url: string, apiKey: string): Promise<Response> {
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
     nextAllowedAt = Date.now() + MIN_INTERVAL_MS
 
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}`, accept: 'application/json' },
-      // Never cached: a nightly job asking for "what changed" must not be
-      // served last night's answer.
-      cache: 'no-store',
-    })
+    let response: Response
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}`, accept: 'application/json' },
+        // Never cached: a nightly job asking for "what changed" must not be
+        // served last night's answer.
+        cache: 'no-store',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (caught) {
+      // A timeout is worth one more go — a blip should not cost the night — but
+      // it must end in a thrown error rather than a hang, so run.ts can record
+      // it against the source and carry on with the others.
+      if (attempt < 3) continue
+      const why = caught instanceof Error ? caught.message : String(caught)
+      throw new Error(
+        `Granola did not answer within ${REQUEST_TIMEOUT_MS / 1000}s after ${attempt} attempts (${why})`,
+      )
+    }
 
     if (response.status !== 429 || attempt >= 3) return response
 
