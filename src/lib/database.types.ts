@@ -1473,6 +1473,69 @@ export type Database = {
           },
         ]
       }
+      ingest_runs: {
+        Row: {
+          activities_created: number
+          already_seen: number
+          ambiguous: number
+          errors: string[]
+          finished_at: string | null
+          id: string
+          ingested: number
+          next_steps_created: number
+          ok: boolean | null
+          ran_for_ms: number | null
+          seen: number
+          sources: string[]
+          started_at: string
+          stopped_early: boolean
+          suggestions_written: number
+          truncated: string[]
+          unknown_senders: number
+          unmatched: number
+        }
+        Insert: {
+          activities_created?: number
+          already_seen?: number
+          ambiguous?: number
+          errors?: string[]
+          finished_at?: string | null
+          id?: string
+          ingested?: number
+          next_steps_created?: number
+          ok?: boolean | null
+          ran_for_ms?: number | null
+          seen?: number
+          sources?: string[]
+          started_at?: string
+          stopped_early?: boolean
+          suggestions_written?: number
+          truncated?: string[]
+          unknown_senders?: number
+          unmatched?: number
+        }
+        Update: {
+          activities_created?: number
+          already_seen?: number
+          ambiguous?: number
+          errors?: string[]
+          finished_at?: string | null
+          id?: string
+          ingested?: number
+          next_steps_created?: number
+          ok?: boolean | null
+          ran_for_ms?: number | null
+          seen?: number
+          sources?: string[]
+          started_at?: string
+          stopped_early?: boolean
+          suggestions_written?: number
+          truncated?: string[]
+          unknown_senders?: number
+          unmatched?: number
+        }
+        Relationships: []
+      }
       ingest_suggestions: {
         Row: {
           applied_batch_id: string | null

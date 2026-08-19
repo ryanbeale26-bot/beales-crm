@@ -1314,6 +1314,75 @@ async function main() {
   const ingestIsAdmin = await asUser(db, INGEST, () => db.query(`select public.is_admin() as ok`))
   check('a service profile is not an admin', ingestIsAdmin.rows[0]?.ok === false)
 
+  // --- ingest_runs: is the job actually running? ------------------------------
+  // Nothing recorded this before. "Last seen" on /admin/ingest only moves when
+  // something is ingested, so a quiet week and a dead cron looked identical.
+  const openedRun = await asUser(db, INGEST, () =>
+    db
+      .query(`insert into ingest_runs (sources) values ('{fixtures}') returning id, ok, finished_at`)
+      .then((r) => r.rows[0])
+      .catch((e) => ({ error: e.message })),
+  )
+  check(
+    'the ingest profile can open a run row',
+    Boolean(openedRun?.id),
+    JSON.stringify(openedRun),
+  )
+  check(
+    'a run in flight has no verdict and no end',
+    openedRun?.ok === null && openedRun?.finished_at === null,
+    JSON.stringify(openedRun),
+  )
+
+  const closedRun = await asUser(db, INGEST, () =>
+    db
+      .query(
+        `update ingest_runs set finished_at = now(), ok = true, seen = 4, ingested = 2,
+           truncated = '{granola}' where id = '${openedRun?.id}'
+         returning ok, seen, truncated`,
+      )
+      .then((r) => r.rows[0])
+      .catch((e) => ({ error: e.message })),
+  )
+  check(
+    'and it can close it with what the run counted',
+    closedRun?.ok === true && closedRun?.seen === 4,
+    JSON.stringify(closedRun),
+  )
+  check(
+    'a short read is recorded by source name',
+    Array.isArray(closedRun?.truncated) && closedRun.truncated[0] === 'granola',
+    JSON.stringify(closedRun?.truncated),
+  )
+
+  const victorSeesRuns = await asUser(db, VICTOR, () =>
+    db.query('select count(*)::int as n from ingest_runs'),
+  )
+  check('every member can see whether the job ran', victorSeesRuns.rows[0].n === 1)
+
+  // Machine-written twice a night. Auditing it would grow audit_log faster than
+  // the thing it records.
+  const runsAudited = await db.query(
+    `select count(*)::int as n from pg_trigger
+     where tgrelid = 'ingest_runs'::regclass and not tgisinternal`,
+  )
+  check('ingest_runs is deliberately not audited', runsAudited.rows[0].n === 0)
+
+  // Nothing in the app deletes a run, and a history of failures is worth more
+  // than a tidy table.
+  const runDelete = await asUser(db, RYAN, () =>
+    db
+      .query(`delete from ingest_runs where id = '${openedRun?.id}'`)
+      .then(() => 'deleted')
+      .catch(() => 'refused'),
+  )
+  const runsLeft = await db.query('select count(*)::int as n from ingest_runs')
+  check(
+    'a run cannot be deleted, even by an admin',
+    runsLeft.rows[0].n === 1,
+    `${runDelete}, ${runsLeft.rows[0].n} left`,
+  )
+
   const ingestRates = await asUser(db, INGEST, () =>
     db.query(`select count(*)::int as n from employee_compensation`),
   )

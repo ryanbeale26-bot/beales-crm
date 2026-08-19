@@ -6,6 +6,7 @@ import { cronSecret, granolaApiKey, hasGranolaEnv } from '@/lib/env'
 import { fixtureSource } from '@/lib/ingest/fixtures'
 import { makeGranolaSource } from '@/lib/ingest/granola'
 import { runIngest } from '@/lib/ingest/run'
+import { failRun, finishRun, startRun, type RunHandle } from '@/lib/ingest/runs'
 import { createIngestClient, ingestProfileId } from '@/lib/supabase/ingest'
 
 /**
@@ -48,8 +49,15 @@ export const dynamic = 'force-dynamic'
  *  the budget doing nothing. */
 const HEADROOM_MS = 30_000
 
-/** How far back a run looks. The connectors in 7b will hold a real cursor;
- *  until then this only bounds the fixture source. */
+/**
+ * How far back a run looks.
+ *
+ * There is deliberately no durable cursor anywhere in this job: idempotency
+ * lives in `ingested_items`, which is one fact rather than two that can
+ * disagree. A fixed lookback plus that mirror means a missed night costs
+ * nothing and a re-seen item is a timestamp touch. Two days is one night of
+ * slack.
+ */
 const LOOKBACK_DAYS = 2
 
 function authorised(request: NextRequest): boolean {
@@ -69,9 +77,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Not authorised' }, { status: 401 })
   }
 
+  // Held outside the try so the catch can close the run row if one was opened.
+  let supabase: Awaited<ReturnType<typeof createIngestClient>> | null = null
+  let handle: RunHandle = null
+
   try {
-    const supabase = await createIngestClient()
+    supabase = await createIngestClient()
     const actorId = await ingestProfileId(supabase)
+
+    const sources = ['fixtures', ...(hasGranolaEnv() ? ['granola'] : [])]
+
+    // Opened here rather than at the top, because writing it needs the session
+    // that signing in just produced. A sign-in failure therefore leaves NO row
+    // at all — which is the same shape as the cron never firing, and both are
+    // caught the same way: /admin/ingest flags how long it has been since the
+    // last run rather than waiting for a row that will never arrive.
+    handle = await startRun(supabase, sources)
 
     const summary = await runIngest(supabase, {
       // Granola is real as of 7c. The fixtures stay wired up beside it: their
@@ -91,6 +112,8 @@ export async function GET(request: NextRequest) {
       actorId,
     })
 
+    await finishRun(supabase, handle, summary, Date.now() - startedAt)
+
     // Deliberately 200 even when items failed. Vercel retries a failed cron,
     // and a retry storm against a throttled API is worse than waiting a day —
     // the per-item state is in the database, so the next run resumes anyway.
@@ -104,6 +127,7 @@ export async function GET(request: NextRequest) {
     // and it will not fix itself. This one is worth a non-200 so it shows up
     // red in Vercel's cron log.
     const message = caught instanceof Error ? caught.message : String(caught)
+    if (supabase) await failRun(supabase, handle, message, Date.now() - startedAt)
     return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }

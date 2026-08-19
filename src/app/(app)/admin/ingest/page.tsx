@@ -3,6 +3,8 @@ import { DomainMap, type Candidate, type DomainRow } from './domain-map'
 import { ProfileAliases, type ProfileAliasRow } from './profile-aliases'
 import { RelinkUpload } from './relink-upload'
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
+import { died, fetchRunHealth } from '@/lib/ingest/run-health'
+import { ago } from '@/lib/format'
 import { Stat } from '@/components/report'
 import { hasIngestEnv } from '@/lib/env'
 import { createClient } from '@/lib/supabase/server'
@@ -45,6 +47,7 @@ export default async function IngestAdminPage() {
     profileAliases,
     people,
     ambiguous,
+    health,
   ] = await Promise.all([
     supabase.from('account_domains').select('id, domain, account_id, accounts ( name )').order('domain'),
     supabase.from('v_domain_candidates').select('*').order('contact_count', { ascending: false }).limit(12),
@@ -79,6 +82,7 @@ export default async function IngestAdminPage() {
       .eq('status', 'needs_review')
       .order('last_seen_at', { ascending: false })
       .limit(30),
+    fetchRunHealth(supabase),
   ])
 
   const items = mirror.data ?? []
@@ -198,6 +202,63 @@ export default async function IngestAdminPage() {
         </p>
       )}
 
+      {/* Whether the job ran at all comes before what it found. Until
+          ingest_runs existed nothing could answer it: "last seen" only moves
+          when there is something to ingest, so a quiet week and a dead cron
+          looked exactly alike. */}
+      <SectionTitle>Last run</SectionTitle>
+      {health.neverRun ? (
+        <EmptyState title="The nightly job has not recorded a run yet.">
+          It records one every time it fires, whether or not it finds anything.
+        </EmptyState>
+      ) : (
+        <>
+          {health.stale && (
+            <p className="border-border mb-3 rounded-[3px] border p-3 text-sm">
+              <strong>Nothing has run for {Math.floor(health.hoursSince ?? 0)} hours.</strong> It
+              should run twice a night. Either the schedule is not firing, or the job cannot sign
+              in — a sign-in failure leaves no record here at all, because writing one needs the
+              session that failed. Check the Vercel cron log.
+            </p>
+          )}
+          <ol className="border-border border-t text-sm">
+            {health.runs.map((run) => (
+              <li key={run.id} className="border-border border-b px-2 py-2.5">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium">
+                    {died(run)
+                      ? 'Never finished'
+                      : run.ok === null
+                        ? 'Running now'
+                        : run.ok
+                          ? 'Clean'
+                          : 'Finished with errors'}
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    {ago(run.startedAt)}
+                    {run.ranForMs !== null && ` · ${(run.ranForMs / 1000).toFixed(1)}s`}
+                    {run.sources.length > 0 && ` · ${run.sources.join(', ')}`}
+                  </span>
+                </div>
+                <div className="text-muted-foreground mt-0.5 text-xs">
+                  {run.seen} seen · {run.ingested} new · {run.alreadySeen} already known ·{' '}
+                  {run.activitiesCreated} activities · {run.nextStepsCreated} next steps ·{' '}
+                  {run.suggestionsWritten} suggestions
+                  {run.stoppedEarly && ' · stopped at the deadline'}
+                  {run.truncated.length > 0 && ` · ${run.truncated.join(', ')} read only part`}
+                </div>
+                {run.errors.map((error) => (
+                  <p key={error} className="text-destructive mt-1 text-xs">
+                    {error}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+
+      <SectionTitle>What it has found</SectionTitle>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Items logged" value={String(linked)} note="Matched to an account" />
         <Stat
