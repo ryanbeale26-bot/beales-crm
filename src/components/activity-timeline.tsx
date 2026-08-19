@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { EmptyState } from '@/components/page-header'
+import { ago } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
 
 type Scope =
@@ -8,23 +9,6 @@ type Scope =
   | { buildingId: string }
   | { contactId: string }
   | { opportunityId: string }
-
-/** "3 days ago" reads faster than a date when you are scanning a timeline. */
-function ago(iso: string): string {
-  const then = new Date(iso).getTime()
-  const mins = Math.round((Date.now() - then) / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins} min ago`
-  const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
-  const days = Math.round(hours / 24)
-  if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'} ago`
-  return new Date(iso).toLocaleDateString('en-US', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
-}
 
 export async function ActivityTimeline({ scope, limit = 30 }: { scope: Scope; limit?: number }) {
   const supabase = await createClient()

@@ -5,6 +5,7 @@ import { linkContactToBuilding, unlinkContactFromBuilding } from '@/app/(app)/ac
 import { ActivityTimeline } from '@/components/activity-timeline'
 import { Select } from '@/components/form-field'
 import { PageHeader, Property, SectionTitle } from '@/components/page-header'
+import { RecordHistory } from '@/components/record-history'
 import { Button } from '@/components/ui/button'
 import { date, fullName } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
@@ -167,6 +168,9 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               </Button>
             </form>
           )}
+
+          <SectionTitle>History</SectionTitle>
+          <RecordHistory table="contacts" recordId={id} limit={15} />
         </section>
       </div>
     </div>

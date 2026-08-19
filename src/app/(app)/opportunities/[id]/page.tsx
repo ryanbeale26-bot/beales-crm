@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { DealActions } from '@/app/(app)/opportunities/[id]/deal-actions'
 import { ActivityTimeline } from '@/components/activity-timeline'
+import { RecordHistory } from '@/components/record-history'
 import { EmptyState, PageHeader, Property } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { ENTITY_LABELS, date, money, squareFeet } from '@/lib/format'
@@ -10,7 +11,7 @@ import { getCompetitors, getLossReasons, getWinReasons } from '@/lib/reference'
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
-const TABS = ['Overview', 'Stage history', 'Activity'] as const
+const TABS = ['Overview', 'Stage history', 'Activity', 'History'] as const
 type Tab = (typeof TABS)[number]
 
 export default async function OpportunityPage({
@@ -246,6 +247,10 @@ export default async function OpportunityPage({
         ))}
 
       {tab === 'Activity' && <ActivityTimeline scope={{ opportunityId: id }} />}
+
+      {/* Stage history is the deal moving; this is everything else about it
+          changing — the price, the owner, the expected close. */}
+      {tab === 'History' && <RecordHistory table="opportunities" recordId={id} />}
     </div>
   )
 }

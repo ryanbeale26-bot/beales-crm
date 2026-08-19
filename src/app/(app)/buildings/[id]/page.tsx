@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { assignEmployee, endAssignment } from '@/app/(app)/actions'
 import { ActivityTimeline } from '@/components/activity-timeline'
+import { RecordHistory } from '@/components/record-history'
 import { Select } from '@/components/form-field'
 import { EmptyState, PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
@@ -399,6 +400,12 @@ export default async function BuildingPage({ params }: { params: Promise<{ id: s
               None linked yet. Link them from a contact&rsquo;s page.
             </p>
           )}
+
+          {/* Contract values live in building_contract_periods, not on the
+              building, so RecordHistory folds them in here — the money is what
+              anybody opening a history is looking for. */}
+          <SectionTitle>History</SectionTitle>
+          <RecordHistory table="buildings" recordId={id} limit={15} />
         </section>
       </div>
     </div>

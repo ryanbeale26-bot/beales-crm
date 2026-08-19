@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { ActivityTimeline } from '@/components/activity-timeline'
+import { RecordHistory } from '@/components/record-history'
 
 import {
   EmptyState,
@@ -24,7 +25,7 @@ import {
 import { createClient } from '@/lib/supabase/server'
 import { cn } from '@/lib/utils'
 
-const TABS = ['Overview', 'Buildings', 'Contacts', 'Activity', 'Opportunities'] as const
+const TABS = ['Overview', 'Buildings', 'Contacts', 'Activity', 'Opportunities', 'History'] as const
 type Tab = (typeof TABS)[number]
 
 export default async function AccountPage({
@@ -280,6 +281,8 @@ export default async function AccountPage({
             </Link>
           </EmptyState>
         ))}
+
+      {tab === 'History' && <RecordHistory table="accounts" recordId={id} />}
     </div>
   )
 }

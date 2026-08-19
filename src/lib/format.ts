@@ -95,3 +95,32 @@ export const HEALTH_LABELS = {
   needs_attention: 'Needs attention',
   at_risk: 'At risk',
 } as const
+
+/**
+ * `scope_add` → "Scope add". The fallback for an enum nobody has written a
+ * label map for — honest for values that read fine with the underscores gone,
+ * and the reason there is no map for every enum in the schema.
+ */
+export function humanise(value: string): string {
+  const words = value.replace(/_/g, ' ').trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : value
+}
+
+/** "3 days ago" reads faster than a date when you are scanning a timeline.
+ *  Shared by the activity timeline and the record history so the two phrase
+ *  time the same way. */
+export function ago(iso: string): string {
+  const then = new Date(iso).getTime()
+  const mins = Math.round((Date.now() - then) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins} min ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'} ago`
+  return new Date(iso).toLocaleDateString('en-US', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}

@@ -2070,6 +2070,105 @@ async function main() {
   check('search returns nothing to somebody who is not a member', stranger.rows[0].n === 0)
 
   // ---------------------------------------------------------------------------
+  console.log('\nHistory screens')
+
+  // The building history folds in its contract values, because the money does
+  // not live on the building -- it lives in building_contract_periods, whose
+  // rows carry building_id in their own snapshot. This is that query.
+  const moneyHistory = await asUser(db, RYAN, () =>
+    db.query(`
+      select action, new_values ->> 'monthly_value' as value
+      from audit_log
+      where table_name = 'building_contract_periods'
+        and new_values ->> 'building_id' = '44444444-4444-4444-4444-444444444444'
+      order by id
+    `),
+  )
+  check(
+    'a contract value change is findable from the building it belongs to',
+    moneyHistory.rows.length >= 2,
+    `${moneyHistory.rows.length} rows`,
+  )
+  check(
+    'and it carries the value that was set',
+    moneyHistory.rows.some((r) => Number(r.value) === 6000),
+    JSON.stringify(moneyHistory.rows.map((r) => r.value)),
+  )
+
+  // One price change writes TWO rows: the new period, and an update closing the
+  // previous one. The renderer drops the second by name (isPeriodBeingClosed),
+  // so this asserts the shape that rule depends on -- an update whose only
+  // changed field is end_date.
+  const closingRows = await db.query(`
+    select old_values, new_values from audit_log
+    where table_name = 'building_contract_periods' and action = 'update'
+  `)
+  const movedFields = closingRows.rows.map((r) =>
+    Object.keys({ ...r.old_values, ...r.new_values })
+      .filter((k) => JSON.stringify(r.old_values?.[k]) !== JSON.stringify(r.new_values?.[k]))
+      .sort()
+      .join(','),
+  )
+  check(
+    'closing the previous period is an update that moves only end_date',
+    movedFields.includes('end_date'),
+    JSON.stringify(movedFields),
+  )
+  // ...and the rule must not swallow a real one. correct_open_contract_value()
+  // is also an update to this table, and it is the most consequential edit
+  // anybody makes -- it restates history without recording a price change.
+  check(
+    'a correction to an open period is a different shape, and survives the rule',
+    movedFields.some((f) => f.includes('monthly_value')),
+    JSON.stringify(movedFields),
+  )
+
+  // The feed reads audit_log directly, so the allowlist in fields.ts is the
+  // second layer and the policy is the first. Both are asserted: this is the
+  // feed's own query shape, run as somebody with no rate access.
+  const feedAsVictor = await asUser(db, VICTOR, () =>
+    db.query(`
+      select table_name, count(*)::int as n from audit_log
+      where table_name in (
+        'accounts', 'buildings', 'building_contract_periods', 'contacts',
+        'opportunities', 'activities', 'sites', 'employees',
+        'employee_assignments', 'next_steps', 'profiles',
+        'employee_compensation', 'employee_assignment_rates'
+      )
+      group by table_name
+    `),
+  )
+  const victorTables = feedAsVictor.rows.map((r) => r.table_name)
+  check(
+    'the feed query returns no rate rows to somebody without rate access',
+    !victorTables.includes('employee_compensation') &&
+      !victorTables.includes('employee_assignment_rates'),
+    JSON.stringify(victorTables),
+  )
+  check(
+    'and still returns the rest of the history to them',
+    victorTables.includes('accounts') && victorTables.includes('buildings'),
+    JSON.stringify(victorTables),
+  )
+
+  // Imports are hidden by default and counted out loud. Both halves rest on
+  // import_batch_id being in the snapshot rather than on a separate column.
+  const importable = await db.query(`
+    select count(*)::int as n from audit_log
+    where new_values ? 'import_batch_id'
+  `)
+  check('an imported row can be told apart by its snapshot', importable.rows[0].n > 0)
+
+  const feedIndex = await db.query(
+    `select indexdef from pg_indexes where indexname = 'audit_log_recent_idx'`,
+  )
+  check(
+    'the feed has an index ordered by time alone',
+    feedIndex.rows[0]?.indexdef?.includes('changed_at DESC'),
+    feedIndex.rows[0]?.indexdef,
+  )
+
+  // ---------------------------------------------------------------------------
   console.log(
     `\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${checks - failures}/${checks} checks\n`,
   )

@@ -33,6 +33,11 @@ export const ADMIN_SECTIONS = [
     blurb: 'Deal stages and their win probabilities, loss reasons, win reasons, lead sources.',
   },
   {
+    href: '/admin/history',
+    title: 'History',
+    blurb: 'Who changed what, across every record. Each record also shows its own.',
+  },
+  {
     href: '/settings/people',
     title: 'People',
     blurb: 'Who can sign in, what they can do, and who sees pay rates.',
