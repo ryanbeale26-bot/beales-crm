@@ -205,10 +205,9 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
       three confidence tiers, `next_steps`, the review queue, the domain map, and the workbook
       relink that gives 113 orphan activities a deal. Runs on fixtures; no external credentials
       needed or used
-- [~] **Phase 7b** — Microsoft Graph. **The groundwork is done**: `ingest_runs`, the run-health
-      screen, the mailbox list and the Graph credential accessors. **`graph.ts` itself is still
-      blocked** on `GRAPH_TENANT_ID`, `GRAPH_CLIENT_SECRET` and 3–4 real samples. Note there are
-      **no delta tokens and there will not be** — see the decision log
+- [x] **Phase 7b** — Microsoft Graph: mail and calendar, `ingest_runs`, the mailbox list, the
+      probe. **Shipped and running against the real mailbox.** No delta tokens and no cursor
+      table, deliberately — see the decision log. Not yet deployed
 - [x] **Phase 7c** — Granola. The title matcher, `match_aliases`, `profile_email_aliases`,
       `granola.ts`, the admin screens, and the probe/backfill scripts. Shipped and tested end to
       end against the real database. **Two things are Ryan's to run:** archive the two duplicate
@@ -227,8 +226,45 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7b groundwork shipped; Phases 1–6 complete. **Last session:** 2026-08-19 (6a, 6b and
-the 7b groundwork, same day).
+**Phase:** 7b shipped. Phases 1–7 are complete except 7d. **Last session:** 2026-08-19 (6a, 6b,
+7b groundwork and 7b itself, same day).
+
+### What changed on 2026-08-19: Phase 7b, mail and calendar
+
+The connector is live and reading Ryan's mailbox. **Everything below was measured with
+`npm run graph:probe`, not taken from documentation** — and three of the shapes are not what the
+docs imply.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **`graphTime()` is the most dangerous line in the file** | Graph returns a calendar time as `"2026-08-06T15:00:00.0000000"` with the zone in a **sibling field** and no marker on the string, so `new Date()` reads it as LOCAL. In Boston that is every meeting four or five hours out, silently, for ever, and nothing would look broken enough to investigate. Six self-tests around it, including one that **refuses** rather than guessing if Graph ever answers in a non-UTC zone |
+| **It never asks for a body** | `$select` takes `bodyPreview` only, which Graph caps at **255 characters** — so the 500-char snippet limit can never be filled, and that is fine. It makes "no full bodies, ever" a fact about the network traffic rather than a promise about storage: there is no copy to leak because none is fetched |
+| **Inbox and Sent Items by name, not `/messages`** | `/users/{id}/messages` sweeps every folder including Junk and Deleted Items. A spoofed message from a known contact's address sitting in Junk must not become an activity |
+| **`internetMessageId`, never `id`** | Confirmed on real data: Graph's `id` changes when a message is filed, so the same email would arrive again as new. 84 characters outbound, 58 inbound from Gmail |
+| **A 403 is the expected answer, not an error** | Four of the five mailboxes are outside the ingest group and answer 403 every night. Counted, not raised. But if **nothing** is readable it throws, because that means tonight achieved nothing and tomorrow will too |
+| **No Granola↔calendar join, deliberately** | Measured before deciding: **1 of 17** notes carried a calendar event at all, and that one matched no Outlook meeting. The two sources barely intersect — Granola captures site inspections dictated into a phone, Outlook holds scheduled meetings. Building a reconciliation for a collision with no real example is the speculative machinery this project has refused twice. **The risk is recorded rather than built for:** a meeting could in principle produce both a calendar activity and a note activity. If it ever shows up, build the join then, on `scheduled_start_time` ↔ `start.dateTime`, with a real case to test against |
+| **The recurring-meeting rule is written blind and says so** | Every event in the tenant was `singleInstance`, so the occurrence path has never met real data. Occurrences share the series master's `iCalUId`, so the external id appends `originalStart` — the rule the schema already documented. Failure mode is visible and harmless: a weekly meeting logs once instead of weekly, or the reverse |
+| **`fetch` had no timeout anywhere** | Found by a probe run that looked like a hang and was merely slow. `granola.ts` could stall until Vercel killed the function at 300s — and a killed function cannot record why it died. Both clients now cap a request at 20s |
+
+Where things live: `src/lib/ingest/graph.ts` (the connector), `scripts/graph-probe.ts`
+(`npm run graph:probe`, and `-- --selftest` for the 17 checks that need no network), plus the
+route wiring. `makeGraphSource(creds, mailboxes)` closes over the mailbox list because
+`SourceFetch` takes only `{ since, deadline }`.
+
+**Tested against the real mailbox on 2026-08-19.** Nine emails from the last two days matched
+known contacts on the `exact` tier and became activities on the right accounts, inbound and
+outbound correctly told apart; thirteen strangers were recorded as an address and nothing else;
+two calendar events matched nothing and were left as id-and-date; a second run created **nothing**
+(112 seen, 0 ingested, 14 already known). `db:verify` 223/223, the probe self-test 17/17,
+typecheck, lint and a cold build all pass.
+
+**Activities moved 804 → 814** — ten real emails, which is the feature working rather than test
+residue. Accounts, buildings, contacts, deals, sites and **MRR $46,086.33** are all unchanged.
+One `create_contact` suggestion is waiting on `/review` and is Ryan's to accept or dismiss.
+
+**Two things the run has NOT proved.** No calendar event has yet become a `next_step`, because
+none in the two-day window matched anything — the mechanism was proved in 7a with a disposable
+account, but not with a Graph item. And no recurring meeting has been seen at all.
 
 ### What changed on 2026-08-19: the 7b groundwork
 
@@ -524,8 +560,9 @@ corpus. Ryan confirms the four Vercel environment variables are set.
 1. **Invite the team.** Phases 1–6 are done and there is nothing structural left in the way.
    Onboarding is `npm run user:password`, not a magic link — see the Defender Safe Links note
    below, which will otherwise burn the token before anybody clicks it.
-2. **Phase 7b.** Mike delivered the app registration on 2026-08-19; three things are still
-   missing — see "What Ryan has to set up".
+2. **Deploy 7b.** Set `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` in the
+   Vercel **Production** environment, then push. Without them Graph is skipped silently and
+   everything else still runs.
 3. The gap-fill data entry, still the thing that makes every number in the app more truthful.
 4. ~~`profiles` has no audit trigger~~ — **done 2026-08-19**, its own migration and commit.
 5. ~~The audit-log screens, 404s, loading states~~ — **done 2026-08-19**, Phase 6b.
@@ -1152,6 +1189,7 @@ a contract that ended three months ago for exactly this reason.
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
 | `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **223 checks** |
+| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs 17 checks with no network |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1409,8 +1447,10 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~The Entra app registration~~ — created 2026-08-19. Client id `60ed8f27-94ae-49e0-b4c6-931ed3099b90`. **Tenant id and client secret still needed.**
 - [x] ~~Admin consent for `Mail.Read` and `Calendars.Read`~~ — granted 2026-08-19, both **Application** type, both reading *Granted for Beales LLC*.
 - [x] ~~The `New-ApplicationAccessPolicy` scoping~~ — done and proved: **Granted** for Ryan, **Denied** for jbeale.
-- [ ] **Does the Granola note↔calendar join actually work?** Ryan's meetings are in Outlook, but Granola reports a Google event id — so the two may be different calendars. One real sample settles it.
-- [ ] **3–4 real samples** — one inbound client email, one outbound, one calendar event with external attendees, one Granola note. No parser gets written before these arrive.
+- [x] ~~Does the Granola note↔calendar join work?~~ — **no, and it does not need to.** Measured 2026-08-19: 1 of 17 notes carries a calendar event, and it matches no Outlook meeting. Not built; the risk is written down instead.
+- [x] ~~3–4 real samples~~ — taken 2026-08-19 with `npm run graph:probe`, and they changed three things. The parser was written from them, not from the docs.
+- [ ] **No calendar event has become a `next_step` yet.** None in the two-day window matched anything. The mechanism was proved in 7a with a disposable account but never with a Graph item — worth watching the first night a real meeting with a known attendee appears.
+- [ ] **The recurring-meeting rule has never met real data.** Every event in the tenant is a single instance. If a weekly meeting logs once instead of weekly (or the reverse), that rule in `graph.ts` is why.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
 
@@ -1435,7 +1475,7 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       buildings were never created, so their notes match nothing.
 
 **Opened by Phase 7a:**
-- [ ] `account_domains` is **empty**. The middle confidence tier does nothing until it is filled, and `/admin/ingest` already offers twelve real candidates derived from existing contacts (ciminelli.com, bsci.com, foxrockproperties.com, bidmc.harvard.edu, medtronic.com, rmrgroup.com, and so on). One click each.
+- [x] ~~`account_domains` is empty~~ — **18 domains are mapped and no candidates remain**, measured 2026-08-19. Ryan did this between sessions and this file had not caught up. The middle confidence tier is live.
 - [ ] The 261 orphan activities the relink could not place. Worth a look at the "what still matches nothing" list before deciding whether they are worth hand-linking at all.
 - [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first.
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
@@ -1540,6 +1580,10 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-19 | …and **staleness**, not the rows, is the load-bearing signal | A failed sign-in cannot write a row at all, because writing needs the session that failed — and a cron that never fires writes nothing either. One mechanism catches both: nothing having run for over 26 hours, on a job that runs twice a night. The screen says this out loud rather than implying the absence of a row means nothing happened |
 | 2026-08-19 | **No delta tokens, and no cursor table** | The original 7b sketch had both. The existing design already refused: idempotency lives in `ingested_items`, "one fact rather than two that can disagree", and a durable cursor is precisely that second fact. Mail does not need one — an email never changes, so a received-date filter plus a two-day lookback is enough. Calendar events do change, and a rolling re-read handles that because the mirror turns a re-seen item into a timestamp touch |
 | 2026-08-19 | **No table of mailboxes: ask for all five and let the access policy answer** | The Entra group is the source of truth and the app cannot read it — `Group.Read.All` was never consented, and asking for it would let this client id enumerate every group in the company, on a registration whose whole design is minimum access. A refusal is recorded as "not in the ingest group" rather than as an error, which makes group membership visible in the app without duplicating it. The cost is stated rather than discovered: the day somebody joins that group their client mail starts being logged, with no further decision taken in the app |
+| 2026-08-19 | **Every Graph shape was measured with a probe before a line of parser was written** | The rule that made the Granola title matcher come out right, applied again and earning its keep again: three of the shapes are not what the documentation implies. The worst is a calendar time returned with the zone in a sibling field and no marker on the string, which `new Date()` reads as local — every meeting four hours out, silently, with nothing ever looking broken enough to investigate |
+| 2026-08-19 | The connector **never requests a message body** | `bodyPreview` only, which Graph caps at 255 characters, so the 500-char snippet limit can never be filled — and that is the point. "No full bodies, ever" becomes a fact about the network traffic rather than a promise about storage: there is no copy to leak because none is fetched. Inbox and Sent Items are read by name rather than sweeping every folder, so a spoofed message in Junk cannot become an activity |
+| 2026-08-19 | **No join between an Outlook meeting and the Granola note about it** | Measured before deciding, which is why the answer is "do not build it": 1 of 17 notes carried a calendar event at all, and that one matched no Outlook meeting. The sources barely intersect — Granola captures inspections dictated into a phone, Outlook holds scheduled meetings. The collision a join would prevent has no real example, so the risk is written down and revisited if it ever appears. Same call as delta tokens and the cursor table |
+| 2026-08-19 | A 403 from a mailbox is **the expected answer**, but zero readable mailboxes is fatal | Four of five people are outside the ingest group and will answer 403 every night for as long as that stays true, so it is counted rather than raised. Nothing readable at all is different: it means the night achieved nothing and tomorrow will too, so it throws and shows up red |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
