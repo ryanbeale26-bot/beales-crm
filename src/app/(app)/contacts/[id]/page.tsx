@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation'
 import { linkContactToBuilding, unlinkContactFromBuilding } from '@/app/(app)/actions'
 import { ActivityTimeline } from '@/components/activity-timeline'
 import { Select } from '@/components/form-field'
-import { PageHeader, Property, SectionTitle } from '@/components/page-header'
+import { EmptyState, PageHeader, Property, SectionTitle } from '@/components/page-header'
 import { RecordHistory } from '@/components/record-history'
 import { Button } from '@/components/ui/button'
 import { date, fullName } from '@/lib/format'
@@ -148,7 +148,11 @@ export default async function ContactPage({ params }: { params: Promise<{ id: st
               )}
             </ul>
           ) : (
-            <p className="text-muted-foreground mb-4 text-sm">Not linked to any building yet.</p>
+            <EmptyState title="Not linked to any building yet.">
+              {linkable.length > 0
+                ? 'Pick one below — a portfolio manager usually covers several.'
+                : 'Add a building first, and it will be offered here.'}
+            </EmptyState>
           )}
 
           {linkable.length > 0 && (
