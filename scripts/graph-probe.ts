@@ -331,39 +331,71 @@ async function main() {
   }
 
   // --- 5. The question this whole probe was worth running for ---------------
-  // CLAUDE.md assumed a Granola note and an Outlook meeting could be joined on
-  // iCalUId. Phase 7c then found Granola reporting a GOOGLE calendar event id,
-  // which means it may have been watching a personal calendar rather than the
-  // work one — in which case the join does not exist and the plan for it is
-  // wrong. Measured here rather than assumed.
-  console.log('\n5. Do Outlook events and Granola notes share an id?')
-  const outlookIds = new Set(
-    events.items.map((e) => String(e.iCalUId ?? '')).filter(Boolean),
-  )
+  // CLAUDE.md assumed an Outlook meeting and a Granola note could be joined on
+  // iCalUId. Phase 7c found Granola reporting a GOOGLE event id instead, which
+  // makes that join impossible — but Granola's calendar_event also carries
+  // scheduled_start_time, and both systems agree about when a meeting starts.
+  //
+  // This matters for deduplication, not for curiosity: without a join, one
+  // meeting Ryan attends produces a calendar activity AND a note activity, and
+  // "one email to several colleagues is one activity" stops being true for
+  // meetings.
+  console.log('\n5. Do Outlook events and Granola notes describe the same meetings?')
+
   const granolaKey = env.GRANOLA_API_KEY?.trim()
+  const outlookStarts = new Map<string, string>()
+  for (const event of events.items) {
+    const start = (event.start as { dateTime?: string } | undefined)?.dateTime
+    // Graph returns "2026-08-06T15:00:00.0000000" with NO zone marker and the
+    // zone in a sibling field. Date.parse would read that as LOCAL time.
+    if (start) outlookStarts.set(`${start.slice(0, 16)}Z`, String(event.iCalUId ?? ''))
+  }
 
   if (!granolaKey) {
     console.log('  skipped — no GRANOLA_API_KEY')
-  } else if (outlookIds.size === 0) {
+  } else if (outlookStarts.size === 0) {
     console.log('  skipped — no Outlook events to compare')
   } else {
-    const { listGranolaNotes } = await import('@/lib/ingest/granola')
+    process.stdout.write('  listing Granola notes … ')
+    const { listGranolaNotes, fetchGranolaNote } = await import('@/lib/ingest/granola')
     const { notes } = await listGranolaNotes({
       apiKey: granolaKey,
       updatedAfter: from,
       deadline: Date.now() + 60_000,
     })
-    console.log(`  ${outlookIds.size} Outlook event ids, ${notes.length} Granola notes in the window`)
-    console.log('  Outlook iCalUIds look like:')
-    for (const id of [...outlookIds].slice(0, 2)) {
-      console.log(`    ${RAW ? id : `${id.slice(0, 12)}… (${id.length} chars)`}`)
+    console.log(`${notes.length} in the same window`)
+
+    let matched = 0
+    let withCalendar = 0
+    for (const note of notes.slice(0, 8)) {
+      process.stdout.write(`  note ${note.id.slice(0, 8)}… `)
+      const detail = await fetchGranolaNote(note.id, granolaKey)
+      const calendar = detail.calendar_event
+      if (!calendar) {
+        console.log('no calendar event attached')
+        continue
+      }
+      withCalendar += 1
+      const start = calendar.scheduled_start_time
+      const key = start ? `${start.slice(0, 16)}Z` : null
+      const hit = key ? outlookStarts.get(key) : undefined
+      console.log(
+        hit !== undefined
+          ? `SAME START as an Outlook event (${key})`
+          : `starts ${key ?? 'unknown'} — no Outlook event then`,
+      )
+      if (hit !== undefined) {
+        matched += 1
+        console.log(`      Granola calendar id: ${RAW ? calendar.calendar_event_id : `${String(calendar.calendar_event_id).slice(0, 10)}… (${String(calendar.calendar_event_id).length} chars)`}`)
+        console.log(`      Outlook iCalUId    : ${RAW ? hit : `${hit.slice(0, 10)}… (${hit.length} chars)`}`)
+        console.log(`      same id?           : ${calendar.calendar_event_id === hit ? 'YES' : 'NO — join on start time, not on id'}`)
+      }
     }
-    console.log(
-      '\n  Compare against the calendar_event_id a note carries — run\n' +
-        '  `npm run granola:probe` and look at what it reports. If the two are\n' +
-        '  different shapes entirely, Granola is watching a different calendar\n' +
-        '  and the note-to-meeting join has to come from somewhere else.',
-    )
+
+    console.log(`\n  ${withCalendar} notes carry a calendar event; ${matched} start at the same moment as an Outlook event.`)
+    if (matched === 0 && withCalendar > 0) {
+      console.log('  No overlap. Granola may be watching a different calendar entirely.')
+    }
   }
 
   console.log('\nNothing was written. Nothing was stored.\n')
