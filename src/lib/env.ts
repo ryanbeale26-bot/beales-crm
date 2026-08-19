@@ -88,6 +88,41 @@ export function hasGranolaEnv(): boolean {
 }
 
 /**
+ * Microsoft Graph — one app registration, application permissions Mail.Read
+ * and Calendars.Read.
+ *
+ * The thing that actually keeps this safe is NOT here. Application permissions
+ * are tenant-wide: without the ApplicationAccessPolicy in Exchange Online this
+ * client id can read every mailbox in the company. `.env.local.example` carries
+ * the argument and the two commands that prove it.
+ *
+ * Copy the secret VALUE, not the Secret ID — Entra shows both, the value is
+ * visible only immediately after creation, and a Secret ID here fails
+ * authentication with an error that does not say so.
+ */
+export function graphCredentials(): {
+  tenantId: string
+  clientId: string
+  clientSecret: string
+} {
+  return {
+    tenantId: required('GRAPH_TENANT_ID', process.env.GRAPH_TENANT_ID),
+    clientId: required('GRAPH_CLIENT_ID', process.env.GRAPH_CLIENT_ID),
+    clientSecret: required('GRAPH_CLIENT_SECRET', process.env.GRAPH_CLIENT_SECRET),
+  }
+}
+
+/** True when all three are set. Same reason as hasGranolaEnv(): a machine
+ *  without the credentials skips the source rather than taking the run down. */
+export function hasGraphEnv(): boolean {
+  return Boolean(
+    process.env.GRAPH_TENANT_ID?.trim() &&
+      process.env.GRAPH_CLIENT_ID?.trim() &&
+      process.env.GRAPH_CLIENT_SECRET?.trim(),
+  )
+}
+
+/**
  * Where this app is reachable. Used to build the magic-link redirect, so
  * getting it wrong means every sign-in link points at the wrong place.
  *
