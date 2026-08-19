@@ -356,6 +356,10 @@ async function main() {
   } else if (outlookStarts.size === 0) {
     console.log('  skipped — no Outlook events to compare')
   } else {
+    // Says how long, because it fetches each note's detail at a throttled
+    // 200ms and takes about ten seconds. Three runs of this were reported as
+    // hangs before it admitted it was merely slow.
+    console.log('  (this part takes about ten seconds)')
     process.stdout.write('  listing Granola notes … ')
     const { listGranolaNotes, fetchGranolaNote } = await import('@/lib/ingest/granola')
     const { notes } = await listGranolaNotes({
