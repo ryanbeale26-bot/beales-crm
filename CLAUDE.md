@@ -198,11 +198,9 @@ Accounts and activity logging first; pipeline next. Ship Phases 1–6 as a worki
 - [x] **Phase 6a** — Global search (⌘K / a header button), one Postgres `search_records()`
       replacing the three-way fan-out behind Quick Add, plus two audit migrations: profiles
       now carry an edit history, and the audit log stopped leaking pay rates
-- [ ] **Phase 6b** — The audit-log screens (a History section per record, an admin feed under
-      Settings), then the empty-state / error / 404 / loading pass, then invite the team.
-      **Split off from Phase 6 deliberately** — turning jsonb diffs into English needs
-      per-table field labels, value formatters and FK-uuid-to-name resolution across four
-      record pages plus a feed, which is its own session's work
+- [x] **Phase 6b** — The audit-log screens (History on all four record pages, `/admin/history`),
+      plus `not-found.tsx` × 2, `global-error.tsx`, `loading.tsx` × 2 and the contacts empty
+      state. **The core product is finished; the team can be invited**
 - [x] **Phase 7a** — The nightly ingest spine. Migration, the machine account, the cron route, the
       three confidence tiers, `next_steps`, the review queue, the domain map, and the workbook
       relink that gives 113 orphan activities a deal. Runs on fixtures; no external credentials
@@ -227,11 +225,55 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 6a shipped. **Last session:** 2026-08-19. Before that, 7c. **Every migration is
-applied to `beales-crm`, including the three from 6a** — `20260821090000_search.sql`,
-`20260821091000_profile_audit.sql` and `20260821092000_audit_rate_privacy.sql`.
-`/admin/cleanup` and everything from 6a are built but **not yet deployed** — they exist only on
-Ryan's laptop until the next push.
+**Phase:** 6b shipped — Phases 1–6 are complete. **Last session:** 2026-08-19 (6a and 6b, same
+day). **Every migration is applied to `beales-crm`**, including `20260821090000_search.sql`,
+`20260821091000_profile_audit.sql`, `20260821092000_audit_rate_privacy.sql` and
+`20260822090000_audit_recent.sql`. 6a is pushed and deployed; **6b is committed but not yet
+pushed**.
+
+### What changed on 2026-08-19: Phase 6b, the audit-log screens
+
+Two thousand audit entries had been accumulating since the first migration with no screen
+anywhere reading them. Now every record has a **History** — a tab on accounts and deals, a
+section on buildings and contacts — and an admin has `/admin/history` across everything.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **The renderer is an allowlist twice over: which tables, and which fields** | Exactly the `gap_fill_allows()` argument. A denylist starts printing a new column the day somebody adds one. Eleven tables in `src/lib/audit/fields.ts`; `match_aliases` / `profile_email_aliases` / `account_domains` are left off as admin plumbing already visible on `/admin/ingest`, and `projects` has no screens yet |
+| **Both rate tables are off the list, though 6a already fixed the policy** | Two independent locks on one door. The database now refuses those rows to anyone without `sees_rates`; leaving the tables off the renderer as well means the screen would still not print a rate if that policy were ever reverted |
+| **`annual_value` is suppressed everywhere** | It is a generated column, so it changes on every single `monthly_value` edit and would print the same change twice, once per month and once per year |
+| **A building's History folds in `building_contract_periods`** | The money is what anybody opening a history is looking for, and it does not live on `buildings`. No join needed: a period row carries `building_id` in its own snapshot, so the filter is `new_values->>building_id` |
+| **…and one price change writes TWO entries, of which one is dropped** | `set_building_monthly_value()` inserts the new period and updates the old one's `end_date`. The second is the same call tidying up after itself. `isPeriodBeingClosed()` drops it **by name**, so nobody deletes it as dead code — and `db:verify` asserts both that the closing shape exists and that a `correct_open_contract_value()` edit, which touches the same table, survives the rule |
+| **The subject comes from the entry's own snapshot, never a lookup** | `new_values->>'name'`, so a record archived since still reads by name rather than as a uuid |
+| **`src/lib/reference.ts` is NOT reused for the uuid lookups** | `getOwners()` excludes service accounts — which is precisely the profile that wrote every ingest row — and most of the others filter `is_active = true`, so a diff naming a retired stage or competitor would render "— ". `src/lib/audit/names.ts` filters nothing, because history has to name what was true at the time |
+| **The feed hides import rows by default, and says how many** | 1,544 of the 1,855 allowlisted entries are spreadsheet imports, which have their own screen and their own Undo at `/admin/import`. Hiding them silently would be the dead-number mistake this app argues against, so the toggle names the count |
+| **`ago()` moved from `activity-timeline.tsx` into `@/lib/format`** | It was module-private and the two timelines sit on the same page; two ways of phrasing "3 days ago" on one screen is the "two implementations disagree" rule in miniature |
+| **A bug found in the browser: a page past the end 416s** | PostgREST answers an out-of-range `range()` with *"Requested range not satisfiable"* rather than an empty list, so `?page=2&table=buildings` rendered an error where it should have said "nothing here". It counts first now and skips the query |
+| **`(app)/not-found.tsx` AND `src/app/not-found.tsx`** | The eight `notFound()` callers all live in the group, so they keep the sidebar — the fastest thing after a dead link is the nav you were already using. A URL matching no route has no shell, so that one carries the logo and its own way home |
+| **`global-error.tsx` does not re-import Montserrat** | That font import is why `next build` is pinned to `--webpack`. A second copy is a second way to break a cold build, for a screen almost nobody will ever see. The body stack is Arial-first anyway |
+
+One migration, `20260822090000_audit_recent.sql`: an index on `audit_log (changed_at desc)`.
+`audit_log_record_idx` is `(table_name, record_id, changed_at desc)` and serves one record's
+History exactly; the feed orders by time alone and had nothing.
+
+Where things live: `src/lib/audit/fields.ts` (the allowlist, `TABLE_META`, `subjectName`),
+`src/lib/audit/names.ts` (batched uuid→name), `src/lib/audit/index.ts` (`fetchRecordHistory`,
+`fetchAuditFeed`), `src/components/record-history.tsx` (`RecordHistory` and the shared
+`HistoryLine`), `src/app/(app)/admin/history/page.tsx`.
+
+**Tested end to end against the real database** under `qa-phase6b@bealesllc.com` (admin, rates)
+and `qa-phase6b-field@bealesllc.com` (field, no rates), both now **deactivated, do not delete**.
+Proved: a health-score edit appears immediately as *"Changed by QA Phase 6b · just now · Health
+— → Needs attention"*, and reverting it appears as its own entry; the 91 Longwater Drive
+correction from Phase 5 renders as *"Monthly value $30,000 → $2,500"* under a **Contract value**
+chip on the building's own page; owner uuids resolve to *Robert Mulligan* and *Jon Beale*; the
+feed's import toggle reads 1,544 and the per-table count matches the database exactly (90 for
+buildings); a field user is turned away from `/admin/history` and still sees each record's own
+History; both 404s render correctly; `?page=2` on a 30-row filter says "Nothing here yet".
+Company numbers identical before and after — **21 accounts, 46 live buildings (43/2/1), 97
+contacts, 800 activities, 44 sites, 55 deals, MRR $46,086.33**. `audit_log` moved 2008 → 2010,
+which is exactly the one test edit and its reversal. `db:verify` **208 → 216**, typecheck, lint
+and a cold `rm -rf .next && npm run build` all pass.
 
 ### What changed on 2026-08-19: Phase 6a, global search
 
@@ -426,16 +468,14 @@ live buildings without one**, so the site backfill has run; **134 `match_aliases
 `ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
 corpus. Ryan confirms the four Vercel environment variables are set.
 
-1. **Phase 6b** — the audit-log screens, then the empty-state / error / 404 / loading pass, then
-   invite the team. It is the only unblocked phase. Two things it does NOT have to re-derive:
-   `(app)/error.tsx` **already covers** `/settings`, `/review` and `/admin/*` by nesting, so the
-   real gaps are a `not-found.tsx` (four detail pages call `notFound()` and get Next's unstyled
-   default), a `global-error.tsx`, no `loading.tsx` anywhere, and `/login` + `/setup` sitting
-   outside the group; and of the 12 pages with no `EmptyState`, eleven are `new`/`edit` forms or
-   always-populated index pages, leaving `contacts/[id]/page.tsx` as the only real omission.
-2. Phase 7b when the IT consultant delivers the Entra app registration.
+1. **Invite the team.** Phases 1–6 are done and there is nothing structural left in the way.
+   Onboarding is `npm run user:password`, not a magic link — see the Defender Safe Links note
+   below, which will otherwise burn the token before anybody clicks it.
+2. **Phase 7b.** Mike delivered the app registration on 2026-08-19; three things are still
+   missing — see "What Ryan has to set up".
 3. The gap-fill data entry, still the thing that makes every number in the app more truthful.
 4. ~~`profiles` has no audit trigger~~ — **done 2026-08-19**, its own migration and commit.
+5. ~~The audit-log screens, 404s, loading states~~ — **done 2026-08-19**, Phase 6b.
 
 **The "two duplicate Libbey records" are settled, and do NOT need archiving again.** This trap has
 now caught one session, so it is written down. There are five buildings at 90/97 Libbey Pkwy and
@@ -631,9 +671,36 @@ all pass.
 
 Nothing below blocked 7a. All of it blocks 7b.
 
-**Microsoft 365 — needs tenant-admin rights, so likely the IT team.** `bealesllc.com` is on
-Exchange Online (verified from public DNS: MX → `bealesllc-com.mail.protection.outlook.com`), so
-**one app registration covers mail and calendar together**.
+**Microsoft 365 — the app registration EXISTS as of 2026-08-19.** Mike (IT) created it and sent
+the proof:
+
+| | |
+|---|---|
+| **`GRAPH_CLIENT_ID`** | `60ed8f27-94ae-49e0-b4c6-931ed3099b90` |
+| **Mailbox scoping** | `Test-ApplicationAccessPolicy` returns **Granted** for `ryan@bealesllc.com` and **Denied** for `jbeale` — the check that stops the app reading ~150 mailboxes. This is the single most important thing in the whole setup and it is done |
+
+**Three things are still outstanding before a line of Graph code is written:**
+
+1. **`GRAPH_TENANT_ID`** — the Directory (tenant) id. Not a secret; ask Mike.
+2. **`GRAPH_CLIENT_SECRET`** — goes straight into `.env.local` and the Vercel env vars.
+   **Never paste it into a chat or a commit.**
+3. **Confirmation that admin consent was granted** for `Mail.Read` and `Calendars.Read` as
+   **Application** permissions (not Delegated). Mike's reply listed this as item 3 and the
+   output was cut off. Success looks like the row reading *Granted for Beale's LLC* with a
+   green tick; without that click the app authenticates and can read nothing.
+
+Then **3–4 real samples**, as below.
+
+**Ryan's meetings are in Outlook / Exchange, not Google — confirmed 2026-08-19.** This matters
+because `granola.ts:35` records that Granola reports a **Google** `calendar_event_id`, which
+means Granola is watching a *personal* Google calendar rather than the work one. So the
+note↔meeting join 7b assumes may not line up at all: Graph will report `iCalUId` for an Outlook
+event, and Granola holds a Google event id for what may be a different calendar entirely.
+**Settle this with one real calendar sample before building the join.**
+
+`bealesllc.com` is on Exchange Online (verified from public DNS: MX →
+`bealesllc-com.mail.protection.outlook.com`), so **one app registration covers mail and calendar
+together**.
 
 1. **Entra ID → App registrations → New registration.** Single tenant, no redirect URI. Keep the
    Application (client) ID and Directory (tenant) ID. Create a client secret and copy its
@@ -811,10 +878,11 @@ public key can read and write nothing.
 
 **Accounts.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
 Victor Melo. Brendan Mulligan is deactivated. Seven QA logins — `qa-phase5@`, `qa-phase5b@`,
-`qa-phase7@`, `qa-phase7c@`, `qa-settings@`, `qa-phase6@` and `qa-phase6-field@` — are
-**deactivated, do not delete**: they hold the audit rows for the 91 Longwater Drive correction and
-for the Phase 5b, 7a, 7c, Settings and 6a testing, and removing a profile would erase who made
-those changes. (Earlier versions of this file counted eleven profiles and named four QA logins;
+`qa-phase7@`, `qa-phase7c@`, `qa-settings@`, `qa-phase6@`, `qa-phase6-field@`, `qa-phase6b@` and
+`qa-phase6b-field@` — are **deactivated, do not delete**: they hold the audit rows for the 91
+Longwater Drive correction and for the Phase 5b, 7a, 7c, Settings, 6a and 6b testing, and removing
+a profile would erase who made those changes. Several of them are now visible **by name** on
+`/admin/history` and on record pages, which is exactly why they are kept. (Earlier versions of this file counted eleven profiles and named four QA logins;
 both numbers had already fallen behind, which is why this now names them rather than counting.)
 
 The machine account is **`ingest@bealesllc.com`, "Nightly ingest"** — `role = field`, `sees_rates = false`,
@@ -1024,7 +1092,7 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **208 checks** |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **216 checks** |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1279,9 +1347,10 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [ ] InspectQA read-only credentials for `beales-inspections` (`illxdfvqvuwoqwbplgiy`) — now Phase 8. The project is identified; the credentials are not yet issued.
 
 **Blocking Phase 7b (Microsoft Graph):**
-- [ ] The Entra app registration — client id, tenant id, client secret. Needs tenant-admin rights, which sit with the IT team.
-- [ ] Admin consent granted for `Mail.Read` and `Calendars.Read` **application** permissions.
-- [ ] The `crm-ingest@bealesllc.com` mail-enabled security group and the `New-ApplicationAccessPolicy` command, or the app can read every mailbox in the tenant. `Test-ApplicationAccessPolicy` must return Granted for Ryan and Denied for anyone else.
+- [x] ~~The Entra app registration~~ — created 2026-08-19. Client id `60ed8f27-94ae-49e0-b4c6-931ed3099b90`. **Tenant id and client secret still needed.**
+- [ ] Admin consent granted for `Mail.Read` and `Calendars.Read` **application** permissions — Mike listed it and the output was cut off. Needs confirming.
+- [x] ~~The `New-ApplicationAccessPolicy` scoping~~ — done and proved: **Granted** for Ryan, **Denied** for jbeale.
+- [ ] **Does the Granola note↔calendar join actually work?** Ryan's meetings are in Outlook, but Granola reports a Google event id — so the two may be different calendars. One real sample settles it.
 - [ ] **3–4 real samples** — one inbound client email, one outbound, one calendar event with external attendees, one Granola note. No parser gets written before these arrive.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
@@ -1403,6 +1472,11 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-19 | Closed and lost records **are** searchable, unlike the Granola phrase book | Opposite decisions from the same facts, for opposite jobs. A phrase from a deal closed two years ago would misfile tonight's note, so matching admits only open deals. Search is navigation: somebody looking up a past deal is looking for the past deal |
 | 2026-08-19 | **The audit log's own policy now tests `can_see_rates()`, not just `is_member()`** | Found while planning the 6b screen, and it was a live leak with no screen involved: both rate tables are audited, so every pay rate ever set sat in `audit_log.new_values` as plain jsonb readable by anyone who could sign in. The rate tables' RLS was being walked around by their own history. Fixed in the policy rather than the renderer, because a screen only protects itself — a report, a CSV export or a request straight from a phone all go around it. The 6b feed should still render from an explicit **allowlist** of tables, since a denylist would start printing a new rate-carrying table the day somebody audits one |
 | 2026-08-19 | Phase 6 was **split into 6a and 6b** rather than half-built | Ryan asked to be pushed back on if it was more than one session, and it is: turning jsonb diffs into English needs per-table field labels, value formatters and FK-uuid-to-name resolution across four record pages plus an admin feed. Search finished and tested beats three things started |
+| 2026-08-19 | **The history renderer is an allowlist of tables AND of fields, not a filter over everything audited** | Same argument as `gap_fill_allows()`, and the same failure it avoids: a denylist starts printing a new column the day somebody adds one, and the column that eventually gets added is the one nobody wanted printed. It also puts a second lock on the pay rates — the policy fixed in 6a is the first, and this means the screen would still not print a rate if that policy were ever reverted |
+| 2026-08-19 | A building's History includes its **contract values**, and drops the row that closes the previous period | The money is what anybody opening a history is looking for, and it does not live on `buildings`. `set_building_monthly_value()` writes two entries for one price change; the second only moves `end_date` and is the same call tidying up after itself. Dropped by a **named rule** rather than a filter, with `db:verify` asserting both that the shape exists and that a `correct_open_contract_value()` edit — which touches the same table and is the most consequential edit anybody makes — survives it |
+| 2026-08-19 | The record's name comes from the entry's **own snapshot**, never a lookup | A record archived since still reads by name rather than as a uuid, and it costs no join. The uuids inside a diff do need looking up, and `src/lib/reference.ts` is the wrong tool for it: `getOwners()` hides service accounts, which wrote every ingest row, and the rest filter `is_active`, so a retired stage or competitor would render as a dash. History has to name what was true at the time |
+| 2026-08-19 | The feed **hides spreadsheet imports by default and names the number** | 1,544 of 1,855 entries are one import. Showing them makes the first page fifty identical rows and the feed reads as broken; hiding them silently is the dead-number mistake this app refuses everywhere else. Imports already have their own screen and their own Undo, so the default is what people did by hand — with the count of what is not shown, one click away |
+| 2026-08-19 | Two `not-found.tsx` files, not one | The eight `notFound()` callers all live inside `(app)`, so theirs keeps the sidebar — after a dead link the fastest thing is the nav you were already using. A URL matching no route at all has no shell and no session, so that one carries the logo and its own way home |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
