@@ -225,6 +225,48 @@ and `20260820091000_alias_candidates_distinct.sql` are all applied** to `beales-
 `/admin/cleanup` is built but **still not deployed** — it exists only on Ryan's laptop until the
 next push. **Last session:** 2026-08-18.
 
+**What changed on 2026-08-18 (third session): the Settings panel.** No schema change, no
+migration. Five screens moved: `/admin/import` and `/admin/cleanup` came **out** of the main
+sidebar, `/admin/ingest` and `/admin/reference` became reachable for the first time, and `/review`
+went **into** the main sidebar because it is everyday work for any member, not admin work.
+`/settings` is the way in, from your name in the sidebar footer.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **The service role key is still nowhere near `src/`** | Creating an account and setting somebody else's password both need it, so both stay terminal jobs — `/settings/people` prints the two commands with a sentence saying why they are not buttons. Changing your OWN password IS in the app: `updateUser({ password })` works on your own session and needs nothing elevated |
+| **Editing a profile needed no new policy** | `profiles_admin_all` has granted an admin `for all` on `profiles` since the initial schema. Verified before building rather than assumed, and it is why this task added no migration |
+| **Your own password change asks for the current one first** | `signInWithPassword` against your own address, then `updateUser`. Without it an unattended open laptop is enough to lock somebody out of their own account. Minimum 12 characters, the same floor `scripts/set-password.mjs` asks for |
+| **Three refusals on the People screen, in the SERVER action and not only greyed-out controls** | You cannot demote yourself (admin is the only role that reaches the screen, so one careless save locks the company out with no way back inside the app); you cannot deactivate yourself; and you cannot deactivate a **service** account, because `is_member()` requires `is_active` and deactivating `ingest@` silently stops the nightly job writing anything. All three were tested by stripping the `disabled` attributes so the request actually reached the server |
+| **Email is read-only on the People screen** | `profiles.email` mirrors the auth record. Editing it here would desync the two with no warning, and fixing the auth side needs the service role key |
+| **Review is hidden from the nav when the queue is empty** | It is empty until 7b has credentials, and a permanent "Review 0" is the dead number this app argues against everywhere else. One `count`/`head: true` query in the layout. It stays reachable by URL, and `/dashboard` and `/admin/import` already link to it when there is something in it. The count renders as a **gold fill with navy on top**, never gold text |
+| **`ADMIN_SECTIONS` is data in `src/lib/settings.ts`** | Same shape as `REPORTS`, so adding an admin screen is one entry rather than a new block of JSX |
+| **Sign out is in BOTH places** | Ryan's call. The footer keeps it at one click for the daily action; Settings offers it too because that is where you would look |
+
+Where things live: `src/lib/settings.ts`, `src/app/(app)/settings/page.tsx`,
+`settings/password-form.tsx`, `settings/people/{page,people-editor,actions}.tsx`. Nothing under
+`src/app/(app)/admin/` changed — those screens are only reachable now.
+
+**A follow-up worth knowing: `profiles` has NO audit trigger.** The `audited` array in
+`20260812180000_initial_schema.sql` covers accounts, buildings, contacts and seven more, and leaves
+`profiles` out — so a role change made on the new People screen leaves no history. That was fine
+when roles were only set from the terminal. It is a one-line migration plus a `db:verify` check,
+deliberately not done in a task that was meant to be schema-free.
+
+Tested end to end against the real database under a temporary admin login
+(`qa-settings@bealesllc.com`, now **deactivated, do not delete**). Proved: the admin sees all five
+Administration rows and every one opens; a **leadership** user sees no Administration section at
+all and `/settings/people` turns them away; a name change saves and shows in the sidebar
+immediately; all three refusals fire and the row snaps back to the truth; a wrong current password
+is refused; the real change works, with the old password then **rejected** and the new one
+**accepted** on a fresh sign-in. Company numbers before and after are identical — 45 buildings
+under 19 accounts, 30 open deals, 97 contacts, MRR **$46,086**, win rate 80%. `db:verify` 193/193,
+typecheck, lint, and a cold `rm -rf .next && npm run build` all pass.
+
+**One thing NOT verified in the browser:** the mobile drawer. The preview pane stopped accepting
+synthetic clicks at 375px, so the hamburger could not be opened. The footer link renders inside the
+drawer and carries the same `onClick={() => setOpen(false)}` the nav already had — worth one look
+on a real phone.
+
 **What changed on 2026-08-18 (second session).** Phase 7c is built. Granola notes are matched on
 their **title**, because measured against all 231 real notes not one carries an external attendee
 address. `match_aliases` maps a curated phrase to exactly one account, building or deal;
@@ -1241,6 +1283,9 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-18 | **The mirror's "already done" check requires a live activity, not just the status** | Both link columns are `on delete set null`, so undoing the backfill leaves 98 rows claiming `linked` with nothing behind them. Without the second condition those notes would be skipped for ever and the undo would have been a **one-way door** — the worst possible property for the button that exists to make a decision reversible. Proved by undoing and re-running: all 98 came back |
 | 2026-08-18 | **The historical backfill is a local script signing in as an admin, not a cron drain** | The 300-second Hobby cap would need new state to carry one batch id across several invocations, or would produce eight Undo buttons for one decision. Locally there is no cap. It signs in as a real admin because `import_batches` is admin-write — correctly, since undo is an admin action and a year of history appearing in the app should have a person's name on it. Prompted rather than argued or added to `.env.local`: an argument lands in shell history and in `ps` |
 | 2026-08-18 | **The probe is a terminal script and calls the same `matchItem()` the job calls** | Its most valuable output is the list of titles that matched nothing, which is exactly where the private notes are — so it belongs on Ryan's own screen and nowhere near a shared table. And a probe that matched slightly differently from the job would be two counts of one number, where the number decides what gets curated |
+| 2026-08-18 | **The admin screens moved behind Settings, and `/review` moved into the main sidebar** | Import and Clean up sat in the nav where all five people saw them daily and four of them got "only an admin can do this" on every click — friction with no upside, on a team whose adoption is the whole risk. Ingest and Reference were the opposite problem: built, working, and reachable only by typing the URL. Review is neither: it is everyday work for any member, so it belongs in the nav — but hidden while the queue is empty, because a permanent "Review 0" is the same dead number this app refuses everywhere else |
+| 2026-08-18 | **Your own password is changeable in the app; anybody else's is not** | The line is not "what is convenient", it is **which key it needs**. `updateUser({ password })` works on your own session with the anon key. Creating an account and resetting somebody else's both need the service role key, which bypasses every RLS policy and is deliberately absent from Vercel — so those two stay terminal jobs, and the screen prints the command rather than offering a form that could never work. A form that cannot work is worse than no form |
+| 2026-08-18 | **A profile edit is refused in the server action, not merely disabled in the UI** | Three refusals: self-demotion, self-deactivation, and deactivating a service account. The first is the dangerous one — admin is the only role that can reach the People screen, so one careless save on your own row locks the company out of Import, Clean up, Reference and People at once, with no way back that does not involve the terminal. Greying out a `<select>` is a hint; the guard has to be where the write happens |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->

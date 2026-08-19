@@ -8,6 +8,12 @@ import { useState } from 'react'
 import { QuickAdd, type ActivityType } from '@/components/quick-add'
 import { cn } from '@/lib/utils'
 
+/**
+ * The everyday screens. The admin ones deliberately are not here — Import and
+ * Clean up used to be, where four of the five people saw them daily and got
+ * "only an admin can do this" every time they clicked. They live behind
+ * Settings now, reached from your name at the bottom.
+ */
 const NAV = [
   { label: 'Dashboard', href: '/dashboard', icon: '◈' },
   { label: 'Pipeline', href: '/opportunities', icon: '◆' },
@@ -16,9 +22,11 @@ const NAV = [
   { label: 'Contacts', href: '/contacts', icon: '☺' },
   { label: 'Employees', href: '/employees', icon: '⚑' },
   { label: 'Activity', href: '/activity', icon: '≡' },
+  // Review is everyday work for anyone, not an admin screen — but it only
+  // appears when there is something in it. A permanent "Review 0" is the kind
+  // of dead number this app argues against everywhere else.
+  { label: 'Review', href: '/review', icon: '⌾', onlyWhenCounted: true },
   { label: 'Reports', href: '/reports', icon: '◱' },
-  { label: 'Import', href: '/admin/import', icon: '↥' },
-  { label: 'Clean up', href: '/admin/cleanup', icon: '✕' },
 ]
 
 const LATER = ['Projects']
@@ -38,15 +46,19 @@ export function AppShell({
   displayName,
   initial,
   activityTypes,
+  reviewCount,
   children,
 }: {
   displayName: string
   initial: string
   activityTypes: ActivityType[]
+  /** Open suggestions waiting on /review. Zero hides the nav item entirely. */
+  reviewCount: number
   children: React.ReactNode
 }) {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const nav = NAV.filter((item) => !item.onlyWhenCounted || reviewCount > 0)
 
   return (
     <div className="flex min-h-screen">
@@ -86,7 +98,7 @@ export function AppShell({
         {/* Tapping any link closes the mobile drawer, so it never covers the
             page you just asked for. */}
         <nav className="flex-1 overflow-y-auto px-2 pb-3" onClick={() => setOpen(false)}>
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
             return (
               <Link
@@ -105,7 +117,14 @@ export function AppShell({
                   <span className="bg-brand-gold absolute top-1 bottom-1 -left-0.5 w-[3px] rounded-full" />
                 )}
                 <span className="w-4 shrink-0 text-center opacity-70">{item.icon}</span>
-                {item.label}
+                <span className="flex-1 truncate">{item.label}</span>
+                {item.onlyWhenCounted && (
+                  // Gold as a fill with navy on top, never gold text — 1.9:1
+                  // against white fails every contrast bar.
+                  <span className="bg-brand-gold text-primary shrink-0 rounded-full px-1.5 text-[11px] font-semibold">
+                    {reviewCount}
+                  </span>
+                )}
               </Link>
             )
           })}
@@ -126,12 +145,24 @@ export function AppShell({
         </nav>
 
         <div className="border-sidebar-border border-t p-2">
-          <div className="row-hover flex items-center gap-2 rounded-[3px] px-2 py-1.5">
+          {/* Your name is the way into Settings — your account, and for an
+              admin, everything administrative. It sits outside the <nav>
+              above, so it needs its own handler to close the mobile drawer or
+              it navigates behind it. */}
+          <Link
+            href="/settings"
+            onClick={() => setOpen(false)}
+            className={cn(
+              'row-hover flex items-center gap-2 rounded-[3px] px-2 py-1.5',
+              pathname.startsWith('/settings') && 'bg-sidebar-accent text-sidebar-accent-foreground',
+            )}
+          >
             <div className="bg-foreground/10 text-foreground/70 flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
               {initial}
             </div>
             <span className="text-foreground/80 flex-1 truncate text-sm">{displayName}</span>
-          </div>
+            <span className="text-foreground/40 shrink-0 text-sm">›</span>
+          </Link>
           <form action="/auth/signout" method="post">
             <button
               type="submit"
