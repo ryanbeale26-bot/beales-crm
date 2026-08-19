@@ -88,9 +88,14 @@ function report(label: string, item: Record<string, unknown>): void {
 // Graph
 // ---------------------------------------------------------------------------
 
+/** Nothing here should take twenty seconds. Without this a stalled connection
+ *  hangs the script with no output at all, which reads as "it did nothing". */
+const TIMEOUT_MS = 20_000
+
 async function getToken(tenantId: string, clientId: string, clientSecret: string): Promise<string> {
   const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     method: 'POST',
+    signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: clientId,
@@ -120,10 +125,17 @@ async function getToken(tenantId: string, clientId: string, clientSecret: string
 type GraphResult = { status: number; items: Record<string, unknown>[]; error: string | null }
 
 async function graphGet(token: string, path: string): Promise<GraphResult> {
-  const response = await fetch(`${GRAPH}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  })
+  let response: Response
+  try {
+    response = await fetch(`${GRAPH}${path}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught)
+    return { status: 0, items: [], error: `no response after ${TIMEOUT_MS / 1000}s (${message})` }
+  }
 
   if (!response.ok) {
     const text = await response.text()
@@ -242,7 +254,9 @@ async function main() {
   // run at 3am. Application permissions are tenant-wide; the access policy is
   // the only thing narrowing them, and this is where you see it working.
   console.log('\n2. Mailbox access — the policy, tested from here')
+  process.stdout.write('  signing in as the ingest profile … ')
   const supabase = await signInAsIngest(env)
+  console.log('ok')
   const mailboxes = await fetchMailboxes(supabase)
 
   if (mailboxes.length === 0) {
@@ -250,18 +264,24 @@ async function main() {
     process.exit(1)
   }
 
+  console.log(`  ${mailboxes.length} to try: ${mailboxes.map((m) => m.address).join(', ')}\n`)
+
   const reachable: string[] = []
   for (const mailbox of mailboxes) {
+    // Printed BEFORE the request, not after. A line that appears and then stops
+    // tells you exactly which call stalled; a line printed only on success
+    // tells you nothing at all, which is how the first run of this looked.
+    process.stdout.write(`  trying ${mailbox.address} … `)
     const result = await graphGet(token, `/users/${encodeURIComponent(mailbox.address)}/messages?$top=1&$select=id`)
     if (result.status === 200) {
       reachable.push(mailbox.address)
-      console.log(`  GRANTED  ${mailbox.address}  (${mailbox.fullName})`)
+      console.log(`GRANTED  (${mailbox.fullName})`)
     } else if (result.status === 403) {
-      console.log(`  denied   ${mailbox.address}  — not in the ingest group, which is correct`)
+      console.log('denied — not in the ingest group, which is correct')
     } else if (result.status === 404) {
-      console.log(`  no mailbox for ${mailbox.address} (${result.status})`)
+      console.log('no mailbox at that address')
     } else {
-      console.log(`  ERROR    ${mailbox.address} — ${result.status}: ${result.error}`)
+      console.log(`ERROR ${result.status}: ${result.error}`)
     }
   }
 
