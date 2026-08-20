@@ -6,10 +6,41 @@ import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { died, fetchRunHealth } from '@/lib/ingest/run-health'
 import { ago } from '@/lib/format'
 import { Stat } from '@/components/report'
-import { hasIngestEnv } from '@/lib/env'
+import { hasGranolaEnv, hasGraphEnv, hasIngestEnv } from '@/lib/env'
+import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 import { createClient } from '@/lib/supabase/server'
 
 export const metadata = { title: 'Ingest' }
+
+/** One connector, and whether this deployment can actually use it. */
+function Source({
+  name,
+  detail,
+  on,
+  note,
+}: {
+  name: string
+  detail: string
+  on: boolean
+  note: string
+}) {
+  return (
+    <li className="border-border flex flex-wrap items-baseline gap-x-2 border-b px-2 py-2">
+      {/* A filled dot, never coloured text: the label beside it carries the
+          meaning, so nothing depends on seeing the colour. */}
+      <span
+        aria-hidden
+        className={on ? 'size-2 rounded-full bg-emerald-600' : 'size-2 rounded-full bg-amber-500'}
+      />
+      <span className="font-medium">{name}</span>
+      <span className="text-muted-foreground text-xs">{detail}</span>
+      <span className={on ? 'ml-auto text-xs' : 'text-muted-foreground ml-auto text-xs'}>
+        {on ? 'Configured' : 'Not configured'}
+      </span>
+      <span className="text-muted-foreground w-full text-xs">{note}</span>
+    </li>
+  )
+}
 
 export default async function IngestAdminPage() {
   const supabase = await createClient()
@@ -48,6 +79,7 @@ export default async function IngestAdminPage() {
     people,
     ambiguous,
     health,
+    mailboxes,
   ] = await Promise.all([
     supabase.from('account_domains').select('id, domain, account_id, accounts ( name )').order('domain'),
     supabase.from('v_domain_candidates').select('*').order('contact_count', { ascending: false }).limit(12),
@@ -83,6 +115,9 @@ export default async function IngestAdminPage() {
       .order('last_seen_at', { ascending: false })
       .limit(30),
     fetchRunHealth(supabase),
+    // Only worth asking when Graph is switched on — it is the list the
+    // connector will try, not a list of people.
+    hasGraphEnv() ? fetchMailboxes(supabase) : Promise.resolve([]),
   ])
 
   const items = mirror.data ?? []
@@ -201,6 +236,39 @@ export default async function IngestAdminPage() {
           screens below still work; nothing will arrive in them until it is.
         </p>
       )}
+
+      {/* Which connectors are switched on, read from the environment this page
+          is rendered in. Before this you could only infer it after the fact,
+          from the `sources` column of a run that had already happened — which
+          meant waiting until 3am to find out a credential had not been set. */}
+      <SectionTitle>Sources</SectionTitle>
+      <ul className="border-border mb-2 border-t text-sm">
+        <Source
+          name="Microsoft Graph"
+          detail="Mail and calendar"
+          on={hasGraphEnv()}
+          note={
+            hasGraphEnv()
+              ? // Named, not counted. The list is every active non-service
+                // profile, so a stray test account quietly joins it — and "6
+                // mailboxes" is a number nobody can check, while six addresses
+                // is a list where the wrong one is obvious.
+                `Will try: ${mailboxes.map((m) => m.address).join(', ')}. The access policy in Exchange decides which of them answer.`
+              : 'GRAPH_TENANT_ID, GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET are not all set — mail and calendar are being skipped'
+          }
+        />
+        <Source
+          name="Granola"
+          detail="Meeting notes"
+          on={hasGranolaEnv()}
+          note={hasGranolaEnv() ? 'Matched on the note title' : 'GRANOLA_API_KEY is not set — notes are being skipped'}
+        />
+      </ul>
+      <p className="text-muted-foreground mb-6 text-xs">
+        Read from this deployment&rsquo;s own environment. A variable added in Vercel only takes
+        effect on the next deployment, so if one reads &ldquo;not set&rdquo; after you added it,
+        redeploy.
+      </p>
 
       {/* Whether the job ran at all comes before what it found. Until
           ingest_runs existed nothing could answer it: "last seen" only moves
