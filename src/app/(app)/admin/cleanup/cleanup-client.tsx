@@ -34,6 +34,15 @@ type BuildingRow = {
   monthlyValue: number
 }
 
+type ContactRow = {
+  id: string
+  name: string
+  email: string | null
+  role: string | null
+  accountName: string | null
+  activities: number
+}
+
 type Archived = { id: string; name: string; deleted_at: string | null }
 
 const money = (n: number) => (n ? `$${n.toLocaleString()}/mo` : '')
@@ -41,21 +50,38 @@ const money = (n: number) => (n ? `$${n.toLocaleString()}/mo` : '')
 export function CleanupClient({
   accounts,
   buildings,
+  contacts,
   archivedAccounts,
   archivedBuildings,
+  archivedContacts,
 }: {
   accounts: AccountRow[]
   buildings: BuildingRow[]
+  contacts: ContactRow[]
   archivedAccounts: Archived[]
   archivedBuildings: Archived[]
+  archivedContacts: Archived[]
 }) {
   const [result, setResult] = useState<CleanupResult | null>(null)
   const [pending, startTransition] = useTransition()
+  // Accounts and buildings are 22 and 53 rows and read fine as a plain list.
+  // Contacts is 99 and climbing, and the reason to open this section is always
+  // one named person, so it gets a filter rather than a scroll.
+  const [contactFilter, setContactFilter] = useState('')
 
   const run = (fn: () => Promise<CleanupResult>) => {
     setResult(null)
     startTransition(async () => setResult(await fn()))
   }
+
+  const needle = contactFilter.trim().toLowerCase()
+  const visibleContacts = needle
+    ? contacts.filter((c) =>
+        [c.name, c.email, c.accountName, c.role]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(needle)),
+      )
+    : contacts
 
   // --- merge an account -----------------------------------------------------
   const [fromAccount, setFromAccount] = useState('')
@@ -234,7 +260,8 @@ export function CleanupClient({
         <p className="text-muted-foreground mb-4 text-sm">
           Archiving hides a record everywhere and deletes nothing. An account still holding
           buildings, or a building still billing, is refused — that is what stops a tidy-up from
-          quietly changing the revenue reports.
+          quietly changing the revenue reports. An archived contact also stops being matched by
+          the nightly ingest, which is the way to take a former colleague back out of it.
         </p>
 
         <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">
@@ -280,10 +307,42 @@ export function CleanupClient({
             />
           ))}
         </RowList>
+
+        <p className="text-muted-foreground mt-6 mb-2 text-xs font-medium tracking-wide uppercase">
+          Contacts
+        </p>
+        <input
+          type="search"
+          value={contactFilter}
+          onChange={(event) => setContactFilter(event.target.value)}
+          placeholder="Filter by name, email or company"
+          className="bg-secondary focus-visible:ring-ring/50 mb-2 h-8 w-full rounded-[3px] px-2 text-sm outline-none focus-visible:ring-2"
+        />
+        <RowList>
+          {visibleContacts.map((c) => (
+            <CleanupRow
+              key={c.id}
+              title={c.name}
+              meta={[c.email, c.accountName ?? 'No account', c.role, `${c.activities} activities`]
+                .filter(Boolean)
+                .join(' · ')}
+              right={
+                <ArchiveButton table="contacts" id={c.id} disabled={pending} onRun={run} hint={null} />
+              }
+            />
+          ))}
+        </RowList>
+        {visibleContacts.length < contacts.length && (
+          <p className="text-muted-foreground mt-2 text-xs">
+            Showing {visibleContacts.length} of {contacts.length}.
+          </p>
+        )}
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {(archivedAccounts.length > 0 || archivedBuildings.length > 0) && (
+      {(archivedAccounts.length > 0 ||
+        archivedBuildings.length > 0 ||
+        archivedContacts.length > 0) && (
         <section>
           <SectionTitle>Archived</SectionTitle>
           <p className="text-muted-foreground mb-4 text-sm">
@@ -317,6 +376,22 @@ export function CleanupClient({
                     variant="ghost"
                     disabled={pending}
                     onClick={() => run(() => restoreRecord('buildings', b.id))}
+                  >
+                    Restore
+                  </Button>
+                }
+              />
+            ))}
+            {archivedContacts.map((c) => (
+              <CleanupRow
+                key={c.id}
+                title={c.name}
+                meta="Contact"
+                right={
+                  <Button
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => run(() => restoreRecord('contacts', c.id))}
                   >
                     Restore
                   </Button>

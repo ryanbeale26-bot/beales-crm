@@ -36,12 +36,23 @@ export default async function CleanupPage() {
       .is('deleted_at', null)
       .order('name'),
     supabase.from('building_contract_periods').select('building_id, monthly_value').is('end_date', null),
-    supabase.from('activities').select('account_id, building_id').limit(5000),
-    supabase.from('contacts').select('account_id').is('deleted_at', null),
+    supabase.from('activities').select('account_id, building_id, contact_id').limit(5000),
+    // Every column the Contacts section renders, not just the roll-up count it
+    // was fetched for. One query serving both beats a second one that can
+    // disagree with it about who is live.
+    supabase
+      .from('contacts')
+      .select('id, first_name, last_name, email, contact_role, account_id')
+      .is('deleted_at', null)
+      .order('last_name'),
     supabase.from('opportunities').select('account_id').is('deleted_at', null),
     Promise.all([
       supabase.from('accounts').select('id, name, deleted_at').not('deleted_at', 'is', null),
       supabase.from('buildings').select('id, name, deleted_at').not('deleted_at', 'is', null),
+      supabase
+        .from('contacts')
+        .select('id, first_name, last_name, deleted_at')
+        .not('deleted_at', 'is', null),
     ]),
   ])
 
@@ -61,6 +72,7 @@ export default async function CleanupPage() {
 
   const activityByAccount = countBy(activities.data, (a) => a.account_id)
   const activityByBuilding = countBy(activities.data, (a) => a.building_id)
+  const activityByContact = countBy(activities.data, (a) => a.contact_id)
   const contactByAccount = countBy(contacts.data, (c) => c.account_id)
   const dealByAccount = countBy(deals.data, (d) => d.account_id)
   const buildingByAccount = countBy(buildings.data, (b) => b.account_id)
@@ -87,7 +99,18 @@ export default async function CleanupPage() {
     monthlyValue: openValue.get(b.id) ?? 0,
   }))
 
-  const [archivedAccounts, archivedBuildings] = archived
+  const [archivedAccounts, archivedBuildings, archivedContacts] = archived
+
+  const accountNameById = new Map((accounts.data ?? []).map((a) => [a.id, a.name]))
+
+  const contactRows = (contacts.data ?? []).map((c) => ({
+    id: c.id,
+    name: `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || (c.email ?? 'Unnamed'),
+    email: c.email,
+    role: c.contact_role,
+    accountName: c.account_id ? (accountNameById.get(c.account_id) ?? null) : null,
+    activities: activityByContact.get(c.id) ?? 0,
+  }))
 
   return (
     <div>
@@ -98,8 +121,14 @@ export default async function CleanupPage() {
       <CleanupClient
         accounts={accountRows}
         buildings={buildingRows}
+        contacts={contactRows}
         archivedAccounts={archivedAccounts.data ?? []}
         archivedBuildings={archivedBuildings.data ?? []}
+        archivedContacts={(archivedContacts.data ?? []).map((c) => ({
+          id: c.id,
+          name: `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unnamed',
+          deleted_at: c.deleted_at,
+        }))}
       />
     </div>
   )
