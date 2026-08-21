@@ -226,8 +226,87 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7b shipped. Phases 1–7 are complete except 7d. **Last session:** 2026-08-19 (6a, 6b,
-7b groundwork and 7b itself, same day).
+**Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
+**Last session:** 2026-08-20.
+
+### What changed on 2026-08-20: the first production runs, and what they exposed
+
+**The first two production runs including Graph fired at 07:51 and 09:45 UTC.** Both clean over
+`{fixtures, granola, graph}`. The first ingested 2 items — the *42 Industrial* thread with Kristen
+Riordan at Fox Rock, inbound and outbound, both `exact`; the second ingested nothing, which is
+idempotency working. **Vercel Hobby cron is approximate to the hour**: `vercel.json` says 07:00 and
+09:00 and they landed 45 and 51 minutes late. Do not read a late run as a broken one.
+
+Chasing the two things 7b had never proved turned up one bug worth more than either.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **A contact with no account used to match NOTHING, and most of the book has no account** | `matchParticipants` matched contacts by address, reduced them to the set of their non-null `account_id`s, and returned a match only when that set held exactly one. An accountless contact contributes nothing to that set, so it counted for nothing — and **63 of the 99 live contacts have no account, 47 of them with an address**. It was doing it in production every night: `meghan.szafran@cancer.org`, a contact since the August import, was sitting on `/review` in the "people writing in from somewhere we don't know" list. A sole accountless contact is now an `exact` match with a **null account**, which is honest rather than invented, and `set_activity_account()` fills it the day she gains one |
+| **…and the domain tier now carries the contact too** | It hardcoded `contactId: null`, so a known person at a mapped domain was linked to the company and then thrown away. The account still wins — an account is worth more than a person — but both are kept |
+| **TWO accountless contacts is still nothing** | Deliberate, and it bites immediately: `jfallon@` and `lwebber2@bwh.harvard.edu` are both accountless contacts, so a message naming both refuses while a message naming one links. The fix is data — map `bwh.harvard.edu`, or give either of them an account — not code |
+| **Recurring meetings are the NORM, and this file said they did not exist** | It recorded that every event in the tenant was a `singleInstance` and that the occurrence path had never met real data. That came from a probe capped at **`$top=5`**, and `calendarView` returns events in start order, so the sample was five one-offs. The real window holds **40 occurrences across 11 series** against 8 single instances |
+| **…so a standing meeting would have written five next steps** | 35 future occurrences of 11 meetings inside `FORWARD_DAYS = 30`. `collapseRecurringSeries()` keeps every occurrence that has **already started** — each of those really did happen — and only the **earliest still ahead** of each series. Stable rather than merely smaller: the earliest is still the earliest two hours later, so the second nightly pass touches a timestamp, and once it passes the one after it takes its place. A series rolls forward a meeting at a time |
+| **Two documented Graph facts are wrong, neither harmfully** | `originalStart` **is** populated on an occurrence, so the schema's rule holds. But occurrences do **not** share the series master's `iCalUId` — Graph gives each its own, 40 ids for 40 occurrences — so the `iCalUId + '/' + originalStart` suffix was already belt and braces rather than the thing keeping them apart. It stays, for a tenant that behaves as documented. `seriesMasterId` is populated and is what the collapse groups on |
+| **The probe now COUNTS the window before sampling it** | `$top` raised 5 → 200, and it prints how many events, how many are occurrences of how many series, how many are ahead, and how many would become next steps. The old output was the reason this file was wrong for a day: a sample answers "what does this look like" and never "what is in here" |
+| **The unknown-sender tray could be crowded out by Granola** | `fetchUnknownSenders` asked for the 25 most recent `ignored` rows, and `ignored` covers two different things — 14 real senders and 84 Granola notes that matched nothing, which by design carry no participants at all. Nothing looked wrong only because mail is touched last each night. It now asks for `external_id like 'unknown:%'`, which is exactly the tray |
+| **Contacts can be archived from `/admin/cleanup`** | `archiveRecord` has accepted `'contacts'` since it was written and the action is generic; only the page never rendered them, so the one sanctioned way to archive a contact was no way at all. It matters because an archived contact stops being matched by the nightly ingest, which is how a former colleague comes back out of it. Contacts get a filter where accounts and buildings do not — 22 and 53 rows read fine as a list, 99 does not |
+| **`npm run user:remove` exists, and mostly refuses** | Deactivating is still how somebody leaves. This is for a profile that turned out not to belong in the app at all, and **anyone with a single `audit_log` entry cannot be removed at any flag** — that is why the QA logins are kept. It cannot half-finish: every FK to `profiles` is NO ACTION bar one, so once the owner columns are reassigned the delete either succeeds or Postgres refuses the whole thing and names the constraint. Dry run unless `--commit` |
+
+**Brendan Mulligan has been removed from the app, on Ryan's instruction.** His profile had **zero**
+audit rows, so nothing historical was lost. It owned the **Dermatology of Cape Cod** account and
+building and had logged one activity (24 Mar); all three went to **Ryan Beale**. His **contact row
+was archived, not deleted** — it carries two March coaching notes about his performance, and the
+standing rule here is soft-delete only. He was the one internal address leaking into the client
+matcher, because a deactivated profile drops out of `colleaguesByEmail` and reads as an outsider
+from then on.
+
+**All five colleagues also exist as `Internal` CONTACT rows.** The four active ones are harmless
+because `colleaguesByEmail` catches them. Worth knowing before deactivating anybody else.
+
+**`contact_role` is free text and is NOT safe to build matcher logic on.** Nineteen distinct values
+came across in the import — `Client Contact` (34), `Client` (4), `Active Client Contact` (1),
+`Prospect Contact` (1) and so on. It reads like a lever and is not one.
+
+### Tested end to end, 2026-08-20
+
+Under `qa-7bh@bealesllc.com` (admin, rates), now **deactivated, do not delete**. The nightly job was
+run by hand twice against the real database, which is the established pattern and writes real rows —
+a nightly run passes no `import_batch_id`, so there is no Undo button for it.
+
+- **The first `next_step` in the app's life.** *Monthly BI Inspection*, due 2026-09-19, owner Ryan,
+  contact **Brittany Hampton**, account **null** — she is an accountless contact, which is precisely
+  the case that could not match this morning. Its `external_id` ends `/2026-09-19T14:00:00Z`, so the
+  occurrence suffix is proved on real data.
+- **And exactly one, from six occurrences of that series in the window.** The 19 Aug occurrence had
+  already happened, so it became an **activity**; only the next one ahead became a next step.
+- 17 activities in total: 7 Granola notes against the BILH and Contemporary Dermatology buildings
+  Ryan created that afternoon, plus 10 emails — three to Meghan Szafran and one to Jessica Fallon,
+  **both accountless contacts who were in the strangers tray that morning**, alongside domain-tier
+  matches to Beth Israel and Tufts Medicine.
+- A second identical run created **nothing**: 102 seen, 0 new, 28 already known. No second next step.
+- `/api/cron/ingest` still returns **401** with no header, not a redirect.
+- The Archive button on `/admin/cleanup` archived Brendan's contact and wrote its audit row; the
+  filter reported *"Showing 1 of 99"*; the tray on `/review` lost Szafran and Brendan and kept the
+  12 genuine strangers plus the two `bwh.harvard.edu` contacts described above.
+- `db:verify` **223/223, unchanged — there is no migration in this work.** `graph:probe --selftest`
+  **17 → 35**, `typecheck`, `lint` and a cold `rm -rf .next && npm run build` all pass.
+
+**Counts before and after: accounts 22 → 22, live buildings 53 → 53 (50 active / 2 pending / 1
+lost), deals 55 → 55, sites 51 → 51, contract periods 12 → 12, and MRR $46,086.33 → $46,086.33.**
+Contacts 99 → 98 (Brendan archived). Activities 816 → 833, `next_steps` 0 → **1**,
+`ingested_items` 261 → 280, `ingest_runs` 8 → 10, `audit_log` 2075 → 2099. The mailbox list reads
+**exactly five addresses** again now the QA login is deactivated.
+
+**One thing left on `/review` deliberately: a `create_contact` suggestion for
+`thelma.eley@cbre.com` at Tufts Medicine, whose first name parsed as "Thelma @ Charlotte" from an
+Outlook display name of "Eley, Thelma @ Charlotte".** Ryan's to accept, edit or dismiss — and worth
+knowing that `splitName` can produce a name like that from a shared mailbox.
+
+**Two things this session did NOT prove.** No calendar event has yet matched on the DOMAIN tier —
+the one that worked was a contact. And of Ryan's 11 recurring series only that one matches anything
+at all; the other 10 stay invisible until a domain is mapped or a contact gains an account.
+`bidplymouth.org`, `bbmfacility.com` and `bostonbuildingmaintenance.com` are the three that appear
+on real meetings and are unmapped.
 
 ### What changed on 2026-08-19: Phase 7b, mail and calendar
 
@@ -243,7 +322,7 @@ docs imply.
 | **`internetMessageId`, never `id`** | Confirmed on real data: Graph's `id` changes when a message is filed, so the same email would arrive again as new. 84 characters outbound, 58 inbound from Gmail |
 | **A 403 is the expected answer, not an error** | Four of the five mailboxes are outside the ingest group and answer 403 every night. Counted, not raised. But if **nothing** is readable it throws, because that means tonight achieved nothing and tomorrow will too |
 | **No Granola↔calendar join, deliberately** | Measured before deciding: **1 of 17** notes carried a calendar event at all, and that one matched no Outlook meeting. The two sources barely intersect — Granola captures site inspections dictated into a phone, Outlook holds scheduled meetings. Building a reconciliation for a collision with no real example is the speculative machinery this project has refused twice. **The risk is recorded rather than built for:** a meeting could in principle produce both a calendar activity and a note activity. If it ever shows up, build the join then, on `scheduled_start_time` ↔ `start.dateTime`, with a real case to test against |
-| **The recurring-meeting rule is written blind and says so** | Every event in the tenant was `singleInstance`, so the occurrence path has never met real data. Occurrences share the series master's `iCalUId`, so the external id appends `originalStart` — the rule the schema already documented. Failure mode is visible and harmless: a weekly meeting logs once instead of weekly, or the reverse |
+| ~~**The recurring-meeting rule is written blind and says so**~~ | **Superseded 2026-08-20 — this row was WRONG.** It said every event in the tenant was a `singleInstance` and the occurrence path had never met real data. That came from a probe capped at `$top=5`; Ryan's calendar is 40 occurrences across 11 series. `originalStart` IS populated, occurrences do NOT share the master's `iCalUId`, and `collapseRecurringSeries()` now keeps one next step per series. See the 2026-08-20 section |
 | **`/admin/ingest` says which connectors this deployment can use** | A *Sources* panel reading `hasGraphEnv()` / `hasGranolaEnv()` at render time. Before it, the only way to learn a credential had not reached production was to wait for 3am and read the `sources` column of a run that had already happened. It also states the thing that catches everybody: **a variable added in Vercel only takes effect on the next deployment** |
 | **It NAMES the mailboxes rather than counting them** | It first read *"6 mailboxes will be tried"*, which looks fine until you remember there are five people. The sixth was a QA login created ten minutes earlier — `fetchMailboxes()` returns every active non-service profile, and a QA account is one until it is deactivated. Six addresses makes the wrong one obvious; a count never could |
 | **`fetch` had no timeout anywhere** | Found by a probe run that looked like a hang and was merely slow. `granola.ts` could stall until Vercel killed the function at 300s — and a killed function cannot record why it died. Both clients now cap a request at 20s |
@@ -481,8 +560,10 @@ family member's health and employment, which names Beale's and would have been r
 colleagues had it matched. That is the "store nothing but the id and the date" rule earning its
 keep on real data rather than in the abstract.
 
-**Live counts, measured 2026-08-19: 21 accounts, 46 live buildings (43 active, 2 pending, 1 lost),
-97 contacts, 800 activities, 44 sites, MRR $46,086.33.** Two accounts have no building yet, which
+**Live counts, measured 2026-08-20: 22 accounts, 53 live buildings (50 active, 2 pending, 1 lost),
+98 contacts, 833 activities, 51 sites, 1 next step, MRR $46,086.33.** (The 7c-era figures below —
+21 accounts, 46 buildings, 800 activities, 44 sites — are superseded; Ryan added the BILH and
+Contemporary Dermatology buildings on 2026-08-20.) Two accounts have no building yet, which
 is why the dashboard reads "45 buildings under 19 accounts" — the tile counts buildings that are
 not lost, and accounts that have one. The book has grown since Phase 7c; earlier figures in this
 file (20 accounts, 39 buildings, 667 activities, MRR $47,148) are the 7c-era numbers and are no
@@ -559,12 +640,21 @@ live buildings without one**, so the site backfill has run; **134 `match_aliases
 `ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
 corpus. Ryan confirms the four Vercel environment variables are set.
 
-1. **Invite the team.** Phases 1–6 are done and there is nothing structural left in the way.
+0. **Push.** The 2026-08-20 hardening is committed and not yet pushed. Nothing in it needs a
+   migration, so a push is the whole deployment.
+1. **Map a domain that appears on real meetings**, and the calendar starts paying for itself:
+   `bidplymouth.org`, `bbmfacility.com`, `bostonbuildingmaintenance.com`. Also worth deciding
+   whether **BBM Facility Services** should be an account at all — Brittany Hampton is its CEO and
+   BBM subcontracts non-union work to Beale's, so it is a source of revenue rather than a customer
+   in the usual sense. Left as a contact-only link for now, deliberately, so nothing appears in MRR
+   that Ryan did not put there.
+2. **Give `jfallon@` and `lwebber2@bwh.harvard.edu` an account, or map `bwh.harvard.edu`.** Both are
+   accountless contacts, so a message naming *both* of them is refused as ambiguous while a message
+   naming one is linked. That is the rule working, and the fix is one field.
+3. **Invite the team.** Phases 1–6 are done and there is nothing structural left in the way.
    Onboarding is `npm run user:password`, not a magic link — see the Defender Safe Links note
    below, which will otherwise burn the token before anybody clicks it.
-2. **Deploy 7b.** Set `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` in the
-   Vercel **Production** environment, then push. Without them Graph is skipped silently and
-   everything else still runs.
+4. ~~**Deploy 7b.**~~ — **done.** Graph is live in production and confirmed by the Sources panel.
 3. The gap-fill data entry, still the thing that makes every number in the app more truthful.
 4. ~~`profiles` has no audit trigger~~ — **done 2026-08-19**, its own migration and commit.
 5. ~~The audit-log screens, 404s, loading states~~ — **done 2026-08-19**, Phase 6b.
@@ -729,7 +819,7 @@ Phase 7c added:
 | `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
 | `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
-`db:verify` grew from 118 to **157 checks**.
+`db:verify` grew from 118 to **157 checks**, and is **223** today.
 
 ### Tested end to end, 2026-08-17
 
@@ -975,9 +1065,12 @@ shell. All three migrations are applied to `beales-crm` (`pjcitahktwnawucoznhk`)
 public key can read and write nothing.
 
 **Accounts.** The five real people are active — Ryan, Jon, Robert Mulligan, Bob Mulligan and
-Victor Melo. Brendan Mulligan is deactivated. Seven QA logins — `qa-phase5@`, `qa-phase5b@`,
+Victor Melo. **Brendan Mulligan was removed entirely on 2026-08-20** — profile deleted (it held no
+audit rows), Dermatology of Cape Cod and its building reassigned to Ryan, his one activity
+reassigned with them, and his CONTACT row archived rather than deleted because of the coaching
+notes on it. Earlier versions of this file said he was merely deactivated. The QA logins — `qa-phase5@`, `qa-phase5b@`,
 `qa-phase7@`, `qa-phase7c@`, `qa-settings@`, `qa-phase6@`, `qa-phase6-field@`, `qa-phase6b@`,
-`qa-phase6b-field@` and `qa-sources@` — are **deactivated, do not delete**: they hold the audit rows for the 91
+`qa-phase6b-field@`, `qa-sources@` and `qa-7bh@` — are **deactivated, do not delete**: they hold the audit rows for the 91
 Longwater Drive correction and for the Phase 5b, 7a, 7c, Settings, 6a and 6b testing, and removing
 a profile would erase who made those changes. Several of them are now visible **by name** on
 `/admin/history` and on record pages, which is exactly why they are kept. (Earlier versions of this file counted eleven profiles and named four QA logins;
@@ -1191,11 +1284,12 @@ a contract that ended three months ago for exactly this reason.
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
 | `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **223 checks** |
-| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs 17 checks with no network |
+| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **35** checks with no network — redaction, the timezone trap, the confidence tiers and the recurring-series collapse |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
-| `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. Only place the service role key is used |
+| `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. One of two places the service role key is used |
+| `npm run user:remove -- --email … --reassign-to …` | Removes a profile that never belonged in the app. **Dry run unless `--commit`**, and it REFUSES anyone with a single `audit_log` entry — deactivate those instead. Reassigns everything they own first, then deletes; Postgres refuses the whole delete if anything still points at them |
 | `npm run lint` / `npm run typecheck` / `npm run build` | The usual checks |
 | `npx supabase db push` | Applies migrations to the real Supabase project. **Every migration including `20260818090000_ingest.sql` is already applied** — this is a no-op until a new one is written |
 | `curl -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/ingest` | Runs the nightly job by hand. Returns a JSON summary; without the header it must return **401**, not a redirect |
@@ -1276,6 +1370,19 @@ Two things made it expensive: the failure is at build time so nothing about the 
 protects you, and **a failed build leaves the previous deployment serving happily**, so production
 looks fine while every push silently fails. The Phase 7a commit sat unpushed and undeployed for a
 day because of it. Check the plan before raising it.
+
+**The in-app preview browser does not HYDRATE until the pane has a viewport, and nothing says so.**
+Found on 2026-08-20 after twenty minutes of chasing a phantom bug. Straight after `preview_start` the
+pane reports `0x0`: `read_page` returns "(empty page)", `document.body.innerText` returns the shell
+alone while `textContent` holds the whole page — and **React never hydrates**, so every
+`element.click()` and every synthetic `input` event silently does nothing while the server logs a
+clean 200. It looks exactly like a broken client component. **Take a `computer {action:
+"screenshot"}` first**: that gives the pane a real viewport, hydration completes, and the same
+clicks work immediately. Check it directly with
+`Object.keys(el).filter(k => k.startsWith('__react')).length` — zero means not hydrated yet, and it
+is *not* a world-isolation artefact, because `javascript_tool` runs in the main world. This is
+almost certainly what the Settings session recorded as "the preview pane stopped accepting synthetic
+clicks at 375px". Assert with `textContent`, never `innerText`, for the same reason.
 
 **The in-app preview browser needs `ArrowDown`, not `Down`, and its screenshots go stale.**
 `computer` with `text: 'Down'` reports "pressed Down" and the page receives nothing, so a keyboard
@@ -1451,8 +1558,10 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~The `New-ApplicationAccessPolicy` scoping~~ — done and proved: **Granted** for Ryan, **Denied** for jbeale.
 - [x] ~~Does the Granola note↔calendar join work?~~ — **no, and it does not need to.** Measured 2026-08-19: 1 of 17 notes carries a calendar event, and it matches no Outlook meeting. Not built; the risk is written down instead.
 - [x] ~~3–4 real samples~~ — taken 2026-08-19 with `npm run graph:probe`, and they changed three things. The parser was written from them, not from the docs.
-- [ ] **No calendar event has become a `next_step` yet.** None in the two-day window matched anything. The mechanism was proved in 7a with a disposable account but never with a Graph item — worth watching the first night a real meeting with a known attendee appears.
-- [ ] **The recurring-meeting rule has never met real data.** Every event in the tenant is a single instance. If a weekly meeting logs once instead of weekly (or the reverse), that rule in `graph.ts` is why.
+- [x] ~~**No calendar event has become a `next_step` yet.**~~ — **done 2026-08-20.** *Monthly BI Inspection*, due 19 Sep, owner Ryan, contact Brittany Hampton, no account. It could not happen before because both contacts on that meeting were accountless, which the matcher treated as nobody.
+- [x] ~~**The recurring-meeting rule has never met real data.**~~ — **it has now, and the assumption behind it was wrong.** 40 occurrences across 11 series in one nightly window. `originalStart` is populated; each occurrence carries its own `iCalUId`; `seriesMasterId` is what groups them. One next step per series, rolling forward.
+- [ ] **No calendar event has matched on the DOMAIN tier.** The one that worked matched a contact. `bidplymouth.org`, `bbmfacility.com` and `bostonbuildingmaintenance.com` all appear on real meetings and are unmapped — mapping any of them is the cheapest way to test it.
+- [ ] **10 of the 11 recurring series match nothing** and leave no trace at all, because Ryan organises them and `recordUnknownSender` skips a colleague. That is correct, and it does mean the calendar is quieter in the app than it looks in Outlook.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
 
@@ -1479,7 +1588,7 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 **Opened by Phase 7a:**
 - [x] ~~`account_domains` is empty~~ — **18 domains are mapped and no candidates remain**, measured 2026-08-19. Ryan did this between sessions and this file had not caught up. The middle confidence tier is live.
 - [ ] The 261 orphan activities the relink could not place. Worth a look at the "what still matches nothing" list before deciding whether they are worth hand-linking at all.
-- [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first.
+- [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first. **Three things measured on 2026-08-20 that decide its shape:** there is **no Anthropic API key in this project**, so it needs one set in `.env.local` and in Vercel Production before a line is written; **email is not the target** — 11 linked Outlook rows with snippets of 214–252 characters, capped by `bodyPreview`'s 255 — while **Granola is**, at 138 linked notes with a median snippet of 500 and **122 of them hitting that 500 cap**, carrying genuinely commitment-shaped prose; and because the stored snippet is truncated at 500, extraction has to run **at ingest time against the live summary**, not against the mirror.
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
 
 ## Decision log
@@ -1587,6 +1696,12 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-19 | **No join between an Outlook meeting and the Granola note about it** | Measured before deciding, which is why the answer is "do not build it": 1 of 17 notes carried a calendar event at all, and that one matched no Outlook meeting. The sources barely intersect — Granola captures inspections dictated into a phone, Outlook holds scheduled meetings. The collision a join would prevent has no real example, so the risk is written down and revisited if it ever appears. Same call as delta tokens and the cursor table |
 | 2026-08-19 | **A screen states what the environment holds, rather than leaving it to be inferred from a run** | Setting a variable in Vercel and wanting to know whether it took should not mean waiting seven hours for the cron. The Sources panel reads the environment it is rendered in and says so. And it names the mailboxes rather than counting them, because a count is a number nobody can check — the first render said "6" when there are five people, and only a list made the stray QA account visible |
 | 2026-08-19 | A 403 from a mailbox is **the expected answer**, but zero readable mailboxes is fatal | Four of five people are outside the ingest group and will answer 403 every night for as long as that stays true, so it is counted rather than raised. Nothing readable at all is different: it means the night achieved nothing and tomorrow will too, so it throws and shows up red |
+| 2026-08-20 | **A contact with no account is still an exact match — to the PERSON, with a null account** | The exact tier reduced its matched contacts to the set of their non-null account ids and required exactly one, so an accountless contact counted for nothing at all. 63 of 99 live contacts have no account, 47 with an address, so most of the book was unreachable by the tier the whole design rests on — and it was filing a real contact in the strangers tray in production every night. A matched address is a fact about a person whether or not somebody finished filling their record in. What is genuinely unknown is the company, and null says so rather than inventing one. Two accountless contacts is still nothing, because picking one of them is exactly the guess this tier exists to refuse |
+| 2026-08-20 | …and the domain tier now carries that contact as well | It hardcoded `contactId: null`, so a known person writing from a mapped domain was linked to the company and then discarded. The account still wins, because an account is worth more than a person, but there was never a reason to throw the person away |
+| 2026-08-20 | **A recurring series contributes ONE next step, not one per occurrence** | `calendarView` expands a series across the window, which is what makes a standing meeting visible and, left alone, what would make it deafening: 35 future occurrences of 11 meetings inside a 30-day horizon. Every occurrence that has already started is kept, because each of those really did happen; only the earliest still ahead survives. It is stable rather than merely smaller — the earliest is still the earliest two hours later, so the second nightly pass touches a timestamp, and the series rolls forward a meeting at a time |
+| 2026-08-20 | **The probe counts the window before it samples it** | `$top` was 5, and five was enough to reach the wrong answer: `calendarView` returns events in start order, the first five happened to be one-offs, and this file recorded on the strength of it that every event in the tenant was a single instance. It is 40 occurrences across 11 series. A sample answers what something looks like and never what is in there — the same mistake as counting a total from the view that computes it |
+| 2026-08-20 | **Removing a profile is possible, refused by default, and cannot half-finish** | Deactivating stays the way somebody leaves, and the audit log is the test: anybody with a single entry cannot be removed at any flag, which is why the QA logins are kept. Brendan Mulligan had none, so he could go — and had to, because a deactivated profile drops out of `colleaguesByEmail` and starts reading as an outside client on every meeting he is on. His CONTACT row was archived rather than deleted: it carries two coaching notes about his performance, and soft-delete-only is the standing rule. The delete is safe by construction rather than by care — every FK to `profiles` is NO ACTION, so Postgres refuses the whole thing and names the constraint if anything still points at them |
+| 2026-08-20 | Vercel Hobby cron fires within the hour, not on it | 07:00 and 09:00 in `vercel.json` landed at 07:51 and 09:45. A late run is not a broken one, and staleness — nothing for over 26 hours — remains the signal that means something |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
