@@ -12,7 +12,7 @@ import {
 } from '@/lib/ingest/match'
 import { activityTypeForTitle } from '@/lib/ingest/titles'
 import { propose, type Proposal } from '@/lib/ingest/suggestions'
-import { toSnippet, type RawItem, type SourceFetch, type Supabase } from '@/lib/ingest'
+import { toBody, toSnippet, type RawItem, type SourceFetch, type Supabase } from '@/lib/ingest'
 
 /**
  * The nightly run: fetch, match, write.
@@ -294,6 +294,10 @@ async function ingestOne(
       .from('next_steps')
       .insert({
         title: item.subject || 'Meeting',
+        // A snippet, not a body, and that is a decision rather than an
+        // oversight: a next step is graph-only in practice (a Granola note is
+        // never future-dated), so this text is `bodyPreview` and already under
+        // 255 characters. Nothing renders it yet either.
         detail: toSnippet(text),
         due_at: item.scheduled.startsAt,
         all_day: item.scheduled.allDay,
@@ -324,7 +328,8 @@ async function ingestOne(
       .insert({
         activity_type_id: typeId,
         subject: item.subject || '(no subject)',
-        body: toSnippet(text),
+        // The whole note, for a source whose text is ours. See BODY_LIMIT.
+        body: toBody(item.source, text),
         occurred_at: item.occurredAt,
         logged_by: credited,
         // account_id may be null on a title match to a deal that has no account
@@ -358,6 +363,11 @@ async function ingestOne(
     // than none.
     direction: item.mailboxEmail ? directionOf(item.participants, dir) : null,
     subject: item.subject,
+    // Still one flattened line at 500, deliberately, even where the activity
+    // above kept everything. The mirror is a review aid — /review and
+    // /admin/ingest are lists somebody triages, and a 1,400-character block per
+    // row turns a triage queue into a reading queue. It also keeps the same
+    // text at two stored copies rather than three, since activities is audited.
     snippet: toSnippet(text),
     participants: item.participants as never,
     thread_key: item.threadKey,

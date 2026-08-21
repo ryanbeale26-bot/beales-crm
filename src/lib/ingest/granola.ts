@@ -245,6 +245,26 @@ function occurredAtOf(note: GranolaNote, detail: GranolaNoteDetail | null): stri
  * live — so a matched note gains its participants and its thread key at the
  * same moment it gains its snippet, and an unmatched note gains none of them.
  */
+/**
+ * Take the markdown furniture off a summary, for the `summary_markdown`
+ * fallback only.
+ *
+ * Deliberately shallow: heading hashes and leading list bullets, nothing else.
+ * It is not a markdown parser and must not become one — the job is to stop a
+ * literal `### Next Steps` appearing on a timeline row, not to reflow prose.
+ * Indentation is kept, because a nested bullet's indent is the only thing left
+ * saying it was nested.
+ *
+ * Exported only so the probe's self-test can pin it, the same way `graph.ts`
+ * exports `graphTime` and `collapseRecurringSeries`.
+ */
+export function stripListMarkers(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => line.replace(/^(\s*)#{1,6}\s+/, '$1').replace(/^(\s*)[-*+]\s+/, '$1'))
+    .join('\n')
+}
+
 export function granolaListItem(note: GranolaNote, apiKey: string): RawItem {
   const item: RawItem = {
     source: 'granola',
@@ -267,8 +287,12 @@ export function granolaListItem(note: GranolaNote, apiKey: string): RawItem {
       item.participants = participantsOf(note, detail)
       item.threadKey = detail.calendar_event?.calendar_event_id ?? null
       // summary_text is already plain. summary_markdown is the same content with
-      // list markers, so it is only a fallback.
-      return detail.summary_text ?? detail.summary_markdown ?? null
+      // list markers, so it is only a fallback — and now that a note is stored
+      // whole rather than flattened into 500 characters, those markers would
+      // render literally down the timeline. Stripped on the fallback path only;
+      // the primary path is untouched.
+      if (detail.summary_text) return detail.summary_text
+      return detail.summary_markdown ? stripListMarkers(detail.summary_markdown) : null
     },
   }
 

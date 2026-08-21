@@ -39,8 +39,15 @@ export type RawItem = {
   mailboxEmail: string | null
   occurredAt: string
   subject: string
-  /** Plain text, already stripped of markup by the source. Trimmed to a snippet
-   *  before it is stored — the full text never lands in the database. */
+  /**
+   * Plain text, already stripped of markup by the source.
+   *
+   * How much of it is stored depends on the source — see `BODY_LIMIT`. This
+   * comment used to say "the full text never lands in the database", which was
+   * a promise about MAIL and is still kept for mail: graph.ts only ever asks
+   * for `bodyPreview`, so there is no full message to store. A Granola note is
+   * ours, was fetched whole anyway, and is kept whole.
+   */
   text: string | null
   /**
    * Fetch the text on demand, for a source where it costs an extra request.
@@ -74,9 +81,98 @@ export type SourceFetch = (options: {
  *  and nowhere near enough to be a mail archive. */
 export const SNIPPET_LENGTH = 500
 
+/** The ellipsis rule, in one place, so the two callers below cannot come to
+ *  disagree about what a cut looks like. */
+function cap(text: string, limit: number): string {
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`
+}
+
+/**
+ * How much of a BODY is kept, per source. Null means all of it.
+ *
+ * Granola is the only null, and that is a statement about what a Granola note
+ * is: a summary somebody dictated about one of our own buildings, downloaded in
+ * full by `granola.ts` and then thrown away at 500 characters for no gain. The
+ * median summary is about 1,400 characters, so the cap was keeping roughly two
+ * thirds of the average note.
+ *
+ * Mail stays capped, and that is a statement about what a mailbox is: not ours
+ * to archive. It costs nothing today either way — `graph.ts` asks only for
+ * `bodyPreview`, which Graph caps at 255 — so 500 here is a stated ceiling
+ * rather than an active cut.
+ *
+ * A Record over the enum rather than a switch or a default: adding a value to
+ * `activity_source` makes THIS OBJECT fail to compile, naming the source it is
+ * missing. Same guarantee an exhaustive switch buys, written as a table.
+ *
+ * It is keyed on the ITEM's source, never on the source descriptor `runIngest`
+ * is handed. That descriptor's `name` is a display string: one connector called
+ * `graph` emits both `outlook` and `outlook_calendar` items, and the fixture
+ * source emits items marked `outlook` too — so keying off it would cap two rows
+ * differently that are identical in every field anyone can see.
+ */
+export const BODY_LIMIT: Record<IngestSource, number | null> = {
+  granola: null,
+  manual: SNIPPET_LENGTH,
+  gmail: SNIPPET_LENGTH,
+  outlook: SNIPPET_LENGTH,
+  imessage: SNIPPET_LENGTH,
+  google_calendar: SNIPPET_LENGTH,
+  outlook_calendar: SNIPPET_LENGTH,
+  cowork: SNIPPET_LENGTH,
+  phone: SNIPPET_LENGTH,
+  system: SNIPPET_LENGTH,
+}
+
+/**
+ * One line, 500 characters: the review aid.
+ *
+ * What the mirror row and a suggestion are read against on /review and
+ * /admin/ingest, where a screenful of rows has to stay scannable. Deliberately
+ * NOT what lands on the activity — see `toBody`. The flattening is the point
+ * here and the bug there.
+ */
 export function toSnippet(text: string | null): string | null {
   if (!text) return null
   const flat = text.replace(/\s+/g, ' ').trim()
   if (flat === '') return null
-  return flat.length <= SNIPPET_LENGTH ? flat : `${flat.slice(0, SNIPPET_LENGTH - 1)}…`
+  return cap(flat, SNIPPET_LENGTH)
+}
+
+/**
+ * What lands in `activities.body`: the note as it was written.
+ *
+ * Keeps the shape, because a Granola summary is not a paragraph — it is a
+ * headed, bulleted document of several sections, and flattening it to one line
+ * is what makes 1,400 characters unreadable. Multi-line bodies are not new to
+ * the column: the workbook importer has always joined an outcome and a next
+ * step with a blank line, and both render sites already use
+ * `whitespace-pre-wrap`.
+ *
+ * CRLF is normalised FIRST, and that order is load-bearing: tidy the spaces
+ * before that and the stray `\r` is eaten as one of them, so the rule reads as
+ * though it never did anything.
+ *
+ * Leading indentation SURVIVES. It looks like whitespace worth collapsing and
+ * is not: once `granola.ts` has taken the list markers off the markdown
+ * fallback, a sub-point's indent is the only thing left saying it was a
+ * sub-point. Tabs become two spaces so one nesting level is one nesting level
+ * however it was typed.
+ */
+export function toBody(source: IngestSource, text: string | null): string | null {
+  if (!text) return null
+  const tidy = text
+    .replace(/\r\n?/g, '\n') // a lone \r would otherwise render as a blank line
+    .split('\n')
+    .map((line) => {
+      if (line.trim() === '') return '' // truly blank, so the run-collapse below can see it
+      const indent = (line.match(/^[^\S\n]*/)?.[0] ?? '').replace(/\t/g, '  ')
+      return indent + line.trim().replace(/[^\S\n]+/g, ' ')
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n') // at most one blank line between blocks
+    .trim()
+  if (tidy === '') return null
+  const limit = BODY_LIMIT[source]
+  return limit === null ? tidy : cap(tidy, limit)
 }

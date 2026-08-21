@@ -124,3 +124,36 @@ export function ago(iso: string): string {
     year: 'numeric',
   })
 }
+
+/**
+ * How much of a long note a timeline row shows before the rest goes behind a
+ * disclosure. Roughly three lines on a laptop, six on a phone.
+ *
+ * Deliberately NOT `SNIPPET_LENGTH`. That number is about what gets stored and
+ * why; this one is about how much vertical space one row of a two-hundred-row
+ * feed may take. Two unrelated reasons, so two unrelated numbers — tying them
+ * would let a storage decision silently relay out every screen.
+ */
+const EXCERPT_LENGTH = 240
+
+/** Never hide a tail this short: a "Show all" that reveals one more line is
+ *  more annoying than the line. */
+const WORTH_HIDING = 80
+
+/**
+ * The opening of a long note, cut at a word.
+ *
+ * Returns null when the note is short enough to print whole — so the threshold
+ * lives here and nowhere else, and a caller cannot accidentally apply a second
+ * one. Only the excerpt is derived; the note itself is always rendered intact
+ * beside it.
+ */
+export function excerpt(text: string): string | null {
+  if (text.length <= EXCERPT_LENGTH + WORTH_HIDING) return null
+  const cut = text.slice(0, EXCERPT_LENGTH)
+  // Back up to a word boundary, but only a short way: a 240-character stretch
+  // with no space in it is not prose, and chopping 200 characters off it to
+  // find one would be worse than cutting mid-word.
+  const space = cut.lastIndexOf(' ')
+  return `${(space > EXCERPT_LENGTH - 40 ? cut.slice(0, space) : cut).trimEnd()}…`
+}

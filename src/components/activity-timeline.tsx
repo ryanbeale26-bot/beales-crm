@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { ActivityBody } from '@/components/activity-body'
 import { EmptyState } from '@/components/page-header'
 import { ago } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
@@ -69,9 +70,7 @@ export async function ActivityTimeline({ scope, limit = 30 }: { scope: Scope; li
             )}
             {a.source !== 'manual' && ` · via ${a.source}`}
           </div>
-          {a.body && (
-            <p className="text-muted-foreground mt-1 text-sm whitespace-pre-wrap">{a.body}</p>
-          )}
+          <ActivityBody body={a.body} />
         </li>
       ))}
     </ol>

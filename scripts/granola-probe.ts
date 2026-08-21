@@ -14,11 +14,16 @@
  *
  * The loop this is built for: probe, add an alias or two at /admin/ingest, probe
  * again. Repeat until the unmatched list is only genuinely personal notes.
+ *
+ * `--selftest` covers two things: what a title MATCHES, and what a matched note
+ * BECOMES once it is stored. Neither needs a network or a database.
  */
 
-import { granolaListItem, listGranolaNotes } from '@/lib/ingest/granola'
+import { toBody, toSnippet } from '@/lib/ingest'
+import { granolaListItem, listGranolaNotes, stripListMarkers } from '@/lib/ingest/granola'
 import { loadDirectory, matchItem } from '@/lib/ingest/match'
 import { matchTitle, activityTypeForTitle, type Phrase } from '@/lib/ingest/titles'
+import { excerpt } from '@/lib/format'
 
 import { readEnvLocal, requireEnv, signInAsIngest } from './granola-env'
 
@@ -110,6 +115,87 @@ function selftest(): number {
   check('a walk through is a Site visit', activityTypeForTitle('6am cancer center walk through') === 'Site visit')
   check('a kick off is a Meeting', activityTypeForTitle('Quincy Ambulatory kick off meeting') === 'Meeting')
 
+  // -------------------------------------------------------------------------
+  // What a matched note BECOMES: how much of it is kept, and in what shape.
+  // -------------------------------------------------------------------------
+  // The expectations below are the literal 500, not SNIPPET_LENGTH. That looks
+  // like the opposite of the "counted, not hardcoded" rule further down, and it
+  // is deliberate: a check that reads its expectation out of the code it is
+  // checking passes whatever that code says. This one has to fail if the number
+  // moves.
+
+  const long = 'word '.repeat(700).trim() // 3499 characters, far past any cap
+
+  const note = toBody('granola', long)
+  check('a Granola note keeps its whole summary', note === long, `${note?.length} chars`)
+
+  const mail = toBody('outlook', long)
+  check('an email is still cut at 500', mail?.length === 500 && mail.endsWith('…'), `${mail?.length} chars`)
+
+  // Its own check rather than a variant of the one above: outlook_calendar is
+  // the entry that would silently go unlimited if somebody edited the map.
+  const invite = toBody('outlook_calendar', long)
+  check('a calendar invitation is cut at 500 too', invite?.length === 500, `${invite?.length} chars`)
+
+  check(
+    'a Granola note keeps its paragraph breaks',
+    toBody('granola', 'Attendees\n\nRyan\nKristen') === 'Attendees\n\nRyan\nKristen',
+  )
+  // No leading space on the last line here, deliberately: a leading space is
+  // INDENT and survives on purpose, which the nested-bullet check below covers.
+  // This one is only about the trailing spaces and the run of blank lines.
+  check(
+    'a Granola note loses its trailing spaces and its extra blank lines',
+    toBody('granola', 'A  b\t\tc \n\n\n\nD ') === 'A b c\n\nD',
+    JSON.stringify(toBody('granola', 'A  b\t\tc \n\n\n\nD ')),
+  )
+  check(
+    'a Windows line ending does not leave a blank line',
+    toBody('granola', 'A\r\nB') === 'A\nB',
+    JSON.stringify(toBody('granola', 'A\r\nB')),
+  )
+  check('an empty note is null rather than an empty body', toBody('granola', '  \n  ') === null)
+  check(
+    'a nested bullet keeps the indent that says it is nested',
+    toBody('granola', 'Supplies\n\t- batteries') === 'Supplies\n  - batteries',
+    JSON.stringify(toBody('granola', 'Supplies\n\t- batteries')),
+  )
+
+  // Only the summary_markdown fallback is stripped; summary_text arrives plain.
+  // Flattened into 500 characters a stray ### never showed. Stored whole, it
+  // would render literally down the middle of the timeline.
+  check(
+    'the markdown fallback loses its heading hashes and bullets',
+    stripListMarkers('### Next Steps\n- Call Kristen\n  * chase the quote') ===
+      'Next Steps\nCall Kristen\n  chase the quote',
+    JSON.stringify(stripListMarkers('### Next Steps\n- Call Kristen\n  * chase the quote')),
+  )
+  check(
+    'and a hyphen inside a sentence is not a bullet',
+    stripListMarkers('Well - and this is the thing - it worked') ===
+      'Well - and this is the thing - it worked',
+  )
+
+  // The two that pin the DIVERGENCE. The mirror row is a review aid and stays
+  // one flattened line at 500 even where the activity above kept everything —
+  // so a future tidy that makes toSnippet call toBody fails here, rather than
+  // on /review six weeks later.
+  check('the mirror snippet is still one line', toSnippet('A\n\nB') === 'A B')
+  check('and the mirror snippet is still cut at 500 for a Granola note', toSnippet(long)?.length === 500)
+
+  // The display threshold. A Granola probe is a slightly odd home for a render
+  // helper, and it is the right one anyway: this is the only runner in the repo
+  // that needs no credential, and an unpinned number deciding what 200 feed
+  // rows look like is the worse of the two problems.
+  check('a short note is printed whole, with no disclosure', excerpt('A short note.') === null)
+  check(
+    'a note barely over the line is still printed whole',
+    excerpt('x'.repeat(320)) === null,
+    'nothing is worth hiding 80 characters for',
+  )
+  check('a long note is cut for the summary', (excerpt(long)?.length ?? 0) <= 241)
+  check('and the cut lands on a word', excerpt(long)?.endsWith('word…') === true, excerpt(long)?.slice(-12))
+
   // Counted, not hardcoded: a total that can disagree with the checks it is
   // counting is the one number in a test nobody would think to doubt.
   console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${ran - failures}/${ran} checks\n`)
@@ -120,7 +206,7 @@ function selftest(): number {
 
 async function main() {
   if (SELFTEST) {
-    console.log('\nTitle matcher self-test — no network, no database\n')
+    console.log('\nTitle matcher and body self-test — no network, no database\n')
     process.exit(selftest() === 0 ? 0 : 1)
   }
 
