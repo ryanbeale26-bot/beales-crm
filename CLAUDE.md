@@ -229,6 +229,37 @@ works before more data arrived. Phase 6 and InspectQA follow.
 **Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
 **Last session:** 2026-08-21.
 
+### What changed on 2026-08-21: a next step is visible before the day it happens
+
+**`fetchUpcomingNextSteps()` was written, exported and called from NOWHERE.** Its own
+docstring said *"Used by the dashboard when there is nothing on today"* — it was not. The
+consequence was that **no screen anywhere showed a next step before the morning it
+happened**: `fetchTodaysMeetings()` is a local-midnight-to-midnight window, so a meeting six
+days out was invisible until the day it landed.
+
+Found because the four wrong `46 Obery St` rows could not be seen on the dashboard at all,
+which is also why nobody noticed them. *Next follow-up* is a different thing entirely —
+`fetchMyFocus()` ranking **accounts** by how long they have gone quiet — and is easy to
+mistake for this.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **"Coming up" renders only when today is empty** | What the function was built for, and it keeps the strip short. Showing both would put up to ten rows above *Top focus* on the first screen anybody opens, competing with the two panels that are already there |
+| **It is fetched alongside today's, not after** | One indexed query capped at five rows — `next_steps_owner_idx` is `(owner_id, due_at) where status = 'open'` and covers it exactly. Asking for it only once today turned out empty would put a second round trip on the critical path of the dashboard |
+| **`MeetingRow` is shared by both, and only the right-hand label differs** | Two copies of one row would drift, and this is the same argument as `ago()` moving into `@/lib/format` |
+| **"Coming up" shows the DATE, "Today" shows the time alone** | `7:00 AM` with no day is useless six days out; the year is left off because nothing in a five-row upcoming list is months away. An all-day row shows the day and no time |
+| **`fetchUpcomingNextSteps()` does NOT filter `origin = 'calendar'`, and that is right** | *Today* is about meetings. *Coming up* is about everything still open and owned by you, which is what 7d's written commitments will land in |
+
+**Tested end to end against the real database** under `qa-upcoming@bealesllc.com` (admin,
+rates), now **deactivated, do not delete** — with three disposable `next_steps` of its own,
+so none of Ryan's rows were touched. With one due later today the strip read *"Today · 0 of 1
+with a client we know · 7:22 PM"* and **Coming up was correctly suppressed** even though two
+future rows existed; dismissing it flipped the strip to *"Coming up · Nothing on today"* with
+*"QA — site walk next week · Thu, Aug 27, 4:22 PM"* above *"QA — all-day inspection · Sun,
+Aug 30"* — soonest first, and the all-day row with no time. All three test rows were then
+deleted. **`next_steps` is back to 5 — 2 open, 3 dismissed.** Also confirmed in passing that a
+deactivated profile sees zero of everything even while holding a live session.
+
 ### What changed on 2026-08-21: four next steps from one weekly meeting — and why
 
 **The bug was a DEPLOY GAP, not a matcher fault. Read this before touching `graph.ts`.**
