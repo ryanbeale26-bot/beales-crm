@@ -140,6 +140,14 @@ export async function fetchUnknownSenders(supabase: Supabase, limit = 25): Promi
     .from('ingested_items')
     .select('participants, last_seen_at')
     .eq('status', 'ignored')
+    // `ignored` covers two very different things. The tray is one of them; the
+    // other is a Granola note that matched nothing, which by design carries no
+    // subject, no snippet and no participants at all — and there are 84 of those
+    // against 14 real senders. Without this they compete for the same `limit`
+    // and get dropped by the flatMap below, so the screen would quietly show
+    // fewer senders than exist the moment Granola were touched last on a night.
+    // The tray rows are exactly the ones keyed `unknown:<address>`.
+    .like('external_id', 'unknown:%')
     .order('last_seen_at', { ascending: false })
     .limit(limit)
 
