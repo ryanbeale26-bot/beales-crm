@@ -1473,6 +1473,78 @@ async function main() {
   )
   check('the same calendar event cannot become two next steps', nextStepDup)
 
+  // --- next_steps: closing one ----------------------------------------------
+  // Nothing in the app wrote `status` until 2026-08-21. The two rows ever
+  // closed were closed from the Supabase SQL editor, which has no auth.uid(),
+  // so they read as "changed by —" on /admin/history. These three checks pin
+  // the behaviour the Done button rests on.
+  const NS_MINE = 'aaaaaaaa-0000-4000-8000-00000000ff01'
+  const NS_THEIRS = 'aaaaaaaa-0000-4000-8000-00000000ff02'
+
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `insert into next_steps (id, title, owner_id, due_at)
+       values ('${NS_MINE}', 'A meeting that already happened', '${RYAN}',
+               now() - interval '2 days');`,
+    ),
+  )
+
+  const marked = await asUser(db, RYAN, () =>
+    db.query(
+      `update next_steps set status = 'done', completed_at = now()
+       where id = '${NS_MINE}' and owner_id = '${RYAN}'
+       returning status, completed_at`,
+    ),
+  )
+  check(
+    'a member can mark their own next step done',
+    marked.rows[0]?.status === 'done' && marked.rows[0]?.completed_at !== null,
+  )
+
+  const closedBy = await db.query(
+    `select changed_by, new_values->>'status' as status
+     from audit_log
+     where table_name = 'next_steps' and record_id = '${NS_MINE}' and action = 'update'
+     order by changed_at desc, id desc limit 1`,
+  )
+  // The whole reason the button exists rather than a SQL statement.
+  check(
+    'closing a next step records who closed it',
+    String(closedBy.rows[0]?.changed_by) === RYAN && closedBy.rows[0]?.status === 'done',
+  )
+
+  const nsUndone = await asUser(db, RYAN, () =>
+    db.query(
+      `update next_steps set status = 'open', completed_at = null
+       where id = '${NS_MINE}' and owner_id = '${RYAN}'
+       returning status, completed_at`,
+    ),
+  )
+  // Undo has to leave no trace on the row itself, or a re-closed step would
+  // carry a completion date from the first time round.
+  check(
+    'undo reopens it and clears the completion date',
+    nsUndone.rows[0]?.status === 'open' && nsUndone.rows[0]?.completed_at === null,
+  )
+
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `insert into next_steps (id, title, owner_id)
+       values ('${NS_THEIRS}', 'Owned by Ryan', '${RYAN}');`,
+    ),
+  )
+  const byAnother = await asUser(db, VICTOR, () =>
+    db.query(`update next_steps set status = 'dismissed' where id = '${NS_THEIRS}' returning id`),
+  )
+  // Deliberately true, and written down so nobody mistakes the .eq('owner_id')
+  // in dashboard/actions.ts for a security boundary. next_steps is member_rw:
+  // any member may close any next step. The app narrows it because closing
+  // somebody else's work silently is rude, not because the database forbids it.
+  check(
+    "any member can close another member's next step — the owner check is the app's",
+    byAnother.rows.length === 1,
+  )
+
   // --- The allowlist ---------------------------------------------------------
   const linkApplied = await asUser(db, RYAN, () =>
     db.query(`select public.apply_gap_fill('activities', $1, $2::jsonb, $3) as n`, [
