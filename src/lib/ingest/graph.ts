@@ -7,8 +7,9 @@ import type { Participant, ParticipantRole, RawItem, SourceFetch } from '@/lib/i
  * Microsoft Graph — mail and calendar.
  *
  * Every shape below was measured with `npm run graph:probe` against the real
- * tenant on 2026-08-19, not taken from documentation. Three of them are not
- * what the docs imply, and each is commented where it bites.
+ * tenant on 2026-08-19, and the recurrence rules again on 2026-08-20, not taken
+ * from documentation. Several are not what the docs imply, and each is commented
+ * where it bites.
  *
  * What this deliberately does NOT do:
  *
@@ -37,7 +38,11 @@ const MAX_PAGES = 20
 const PAGE_SIZE = 50
 
 /** How far ahead to read the calendar. Future events become next steps, which is
- *  what fills the dashboard's Today strip. */
+ *  what fills the dashboard's Today strip.
+ *
+ *  Thirty days is a long way for a book of standing meetings, and deliberately
+ *  so: it is what makes a recurring series VISIBLE. What stops it being noisy is
+ *  collapseRecurringSeries below, which keeps only the next occurrence of each. */
 const FORWARD_DAYS = 30
 
 // ---------------------------------------------------------------------------
@@ -213,6 +218,7 @@ const EVENT_SELECT = [
   'attendees',
   'type',
   'originalStart',
+  'seriesMasterId',
 ].join(',')
 
 function messageToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | null {
@@ -246,13 +252,18 @@ function eventToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | 
   if (!iCalUId || !start?.dateTime) return null
   if (raw.isCancelled === true) return null
 
-  // UNVERIFIED, and flagged as such: every event in the tenant when this was
-  // written was a singleInstance, so the recurring path has never met real data.
-  // Occurrences of one series all share the master's iCalUId, so without the
-  // original start a weekly meeting would collapse into a single row that
-  // simply moved its date every week. The rule is the one the schema documents.
-  // If it is wrong, the symptom is visible and harmless: a recurring meeting
-  // logs once instead of weekly, or weekly instead of once.
+  // MEASURED against the real tenant on 2026-08-20, replacing a note that said
+  // this path had never met real data. It has now, and recurrence is not the
+  // edge case that note assumed: of 48 events in one nightly window, 40 were
+  // occurrences, across 11 distinct series. The earlier reading of "every event
+  // is a singleInstance" came from a probe capped at $top=5.
+  //
+  // Two things the documentation gets wrong, neither of them harmful:
+  //   - originalStart IS populated on an occurrence, so the schema's rule holds.
+  //   - occurrences do NOT share the series master's iCalUId. Graph gives each
+  //     its own — 40 ids for 40 occurrences — so the suffix below was already
+  //     belt and braces rather than the thing keeping them apart. It stays,
+  //     because a tenant that behaves the documented way would need it.
   const occurrence =
     (raw.type === 'occurrence' || raw.type === 'exception') &&
     typeof raw.originalStart === 'string'
@@ -279,6 +290,72 @@ function eventToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | 
     // is an activity.
     scheduled: { startsAt, allDay: raw.isAllDay === true },
   }
+}
+
+/**
+ * One row per recurring series that is still ahead of us, not one per occurrence.
+ *
+ * `calendarView` expands a series across the whole window, which is what makes
+ * a standing meeting visible at all — and, left alone, what would make it
+ * deafening. Measured on 2026-08-20: Ryan's next thirty days hold 35 future
+ * occurrences belonging to 11 series, so the first night matching worked, one
+ * weekly site meeting would have written five next steps and the Today strip
+ * would have opened full of the same title five times over.
+ *
+ * The rule:
+ *
+ *   - Everything that has ALREADY STARTED is kept, every one of it. Each of
+ *     those meetings really did happen separately and deserves its own activity.
+ *     The two-day lookback means there is rarely more than one per series.
+ *   - Of what is still ahead, only the EARLIEST of each series survives. One
+ *     standing meeting, one live next step.
+ *   - A single instance has no series and is never touched.
+ *
+ * It is stable across runs rather than merely smaller: the earliest future
+ * occurrence is still the earliest two hours later, so the second nightly pass
+ * sees the same external_id and touches a timestamp. Once it has passed, the one
+ * after it becomes earliest and gets a next step of its own — the series rolls
+ * forward a meeting at a time instead of arriving all at once.
+ */
+export function collapseRecurringSeries(
+  events: Record<string, unknown>[],
+  now: number,
+): Record<string, unknown>[] {
+  const earliestAhead = new Map<string, { at: number; event: Record<string, unknown> }>()
+  const kept: Record<string, unknown>[] = []
+
+  for (const event of events) {
+    const series = typeof event.seriesMasterId === 'string' ? event.seriesMasterId : null
+    const start = (event.start as { dateTime?: string; timeZone?: string } | undefined) ?? undefined
+
+    // No series, or nothing to compare on: not this function's business.
+    if (!series || !start?.dateTime) {
+      kept.push(event)
+      continue
+    }
+
+    let at: number
+    try {
+      at = new Date(graphTime(start.dateTime, start.timeZone)).getTime()
+    } catch {
+      // graphTime refuses rather than guesses on a non-UTC answer. Keep the
+      // event and let eventToItem raise for real, rather than silently dropping
+      // a meeting because we could not read its clock.
+      kept.push(event)
+      continue
+    }
+
+    if (at <= now) {
+      kept.push(event)
+      continue
+    }
+
+    const best = earliestAhead.get(series)
+    if (!best || at < best.at) earliestAhead.set(series, { at, event })
+  }
+
+  for (const { event } of earliestAhead.values()) kept.push(event)
+  return kept
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +426,9 @@ export function makeGraphSource(creds: GraphCredentials, mailboxes: Mailbox[]): 
         const page = await getPages(token, calendarUrl, deadline)
         if (page.status === 200) {
           if (page.truncated) truncated = true
-          for (const raw of page.items) {
+          // Collapse BEFORE mapping. One `now` for the whole mailbox, so a slow
+          // page cannot make two occurrences of one series both look earliest.
+          for (const raw of collapseRecurringSeries(page.items, Date.now())) {
             const item = eventToItem(raw, mailbox)
             if (item) items.push(item)
           }

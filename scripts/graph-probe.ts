@@ -3,7 +3,7 @@
  *
  *   npm run graph:probe             # shapes only — safe to share
  *   npm run graph:probe -- --raw    # full JSON, for your eyes only
- *   npm run graph:probe -- --selftest  # the redaction rules only. No network.
+ *   npm run graph:probe -- --selftest  # redaction, times, tiers, recurrence. No network.
  *
  * This is the script that has to run before a line of the mail parser is
  * written, for the same reason the Granola probe came before the title matcher:
@@ -24,7 +24,9 @@
  * that will actually run at 3am — granted for one mailbox, denied for another.
  */
 
-import { graphTime } from '@/lib/ingest/graph'
+import { collapseRecurringSeries, graphTime } from '@/lib/ingest/graph'
+import { matchParticipants, type Directory } from '@/lib/ingest/match'
+import type { Participant } from '@/lib/ingest'
 import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 
 import { readEnvLocal, requireEnv, signInAsIngest } from './granola-env'
@@ -191,7 +193,9 @@ const EVENT_FIELDS = [
  */
 function selftest(): number {
   let failures = 0
+  let total = 0
   const check = (name: string, ok: boolean, detail = '') => {
+    total += 1
     console.log(ok ? `  ok    ${name}` : `  FAIL  ${name}${detail ? ` — ${detail}` : ''}`)
     if (!ok) failures += 1
   }
@@ -271,8 +275,264 @@ function selftest(): number {
     })(),
   )
 
-  console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${17 - failures}/17 checks\n`)
+  matchingChecks(check)
+  recurrenceChecks(check)
+
+  console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${total - failures}/${total} checks\n`)
   return failures
+}
+
+type Check = (name: string, ok: boolean, detail?: string) => void
+
+/** Enough of a Directory to exercise the tiers. `phrases` and `targets` are
+ *  title matching, which is Granola's business and not reachable from here. */
+function directory(options: {
+  contacts?: [string, string | null][]
+  domains?: [string, string][]
+  accountNames?: [string, string][]
+  colleagues?: string[]
+}): Directory {
+  const contactsByEmail = new Map<string, { id: string; accountId: string | null }[]>()
+  for (const [address, accountId] of options.contacts ?? []) {
+    const existing = contactsByEmail.get(address) ?? []
+    existing.push({ id: `contact-${address}`, accountId })
+    contactsByEmail.set(address, existing)
+  }
+
+  return {
+    contactsByEmail,
+    accountByDomain: new Map(options.domains ?? []),
+    accountNames: new Map(options.accountNames ?? []),
+    colleaguesByEmail: new Map(
+      (options.colleagues ?? []).map((address) => [address, { id: 'us', fullName: 'A Colleague' }]),
+    ),
+    phrases: [],
+    targets: new Map(),
+  }
+}
+
+const people = (...addresses: string[]): Participant[] =>
+  addresses.map((address, index) => ({
+    address,
+    name: null,
+    role: index === 0 ? 'from' : 'to',
+  }))
+
+/**
+ * The tiers, and the bug that shipped in them.
+ *
+ * Until 2026-08-20 a contact with no `account_id` matched nothing at all — the
+ * exact tier reduced its matches to a set of non-null account ids and required
+ * exactly one, so an accountless contact contributed zero and the message went
+ * to the strangers tray. 63 of 99 live contacts are accountless, and it was
+ * doing this to a real contact in production every night.
+ */
+function matchingChecks(check: Check): void {
+  console.log('\n  the confidence tiers')
+
+  const withAccount = directory({
+    contacts: [['jo@client.test', 'acct-1']],
+    accountNames: [['acct-1', 'A Client']],
+  })
+  const one = matchParticipants(people('jo@client.test'), withAccount)
+  check(
+    'a contact WITH an account still links the account and the person',
+    one?.confidence === 'exact' && one.accountId === 'acct-1' && one.contactId !== null,
+    JSON.stringify(one),
+  )
+
+  const twoAtOne = directory({
+    contacts: [
+      ['jo@client.test', 'acct-1'],
+      ['sam@client.test', 'acct-1'],
+    ],
+    accountNames: [['acct-1', 'A Client']],
+  })
+  const pair = matchParticipants(people('jo@client.test', 'sam@client.test'), twoAtOne)
+  check(
+    'two people at one company link the company and not one of them',
+    pair?.accountId === 'acct-1' && pair.contactId === null,
+    JSON.stringify(pair),
+  )
+
+  const twoAccounts = directory({
+    contacts: [
+      ['jo@client.test', 'acct-1'],
+      ['sam@other.test', 'acct-2'],
+    ],
+  })
+  check(
+    'a broker introducing two clients links neither',
+    matchParticipants(people('jo@client.test', 'sam@other.test'), twoAccounts) === null,
+  )
+
+  // --- the fix ---------------------------------------------------------------
+  const accountless = directory({ contacts: [['brittany@bbm.test', null]] })
+  const known = matchParticipants(people('brittany@bbm.test'), accountless)
+  check(
+    'a contact with NO account is still an exact match to that person',
+    known?.confidence === 'exact' && known.contactId === 'contact-brittany@bbm.test',
+    JSON.stringify(known),
+  )
+  check(
+    '...and its account is null rather than invented',
+    known?.accountId === null,
+    JSON.stringify(known),
+  )
+
+  const twoAccountless = directory({
+    contacts: [
+      ['brittany@bbm.test', null],
+      ['brendan@bealesllc.test', null],
+    ],
+  })
+  check(
+    'TWO accountless contacts is still nothing — picking one is the guess this refuses',
+    matchParticipants(people('brendan@bealesllc.test', 'brittany@bbm.test'), twoAccountless) === null,
+  )
+
+  const accountlessAtMappedDomain = directory({
+    contacts: [['jo@client.test', null]],
+    domains: [['client.test', 'acct-1']],
+    accountNames: [['acct-1', 'A Client']],
+  })
+  const enriched = matchParticipants(people('jo@client.test'), accountlessAtMappedDomain)
+  check(
+    'a mapped domain still wins, because an account is worth more than a person',
+    enriched?.confidence === 'domain' && enriched.accountId === 'acct-1',
+    JSON.stringify(enriched),
+  )
+  check(
+    '...and it now carries the contact too, which it used to throw away',
+    enriched?.contactId === 'contact-jo@client.test',
+    JSON.stringify(enriched),
+  )
+  check(
+    '...and stops claiming nobody on the message is a contact',
+    !(enriched?.rationale ?? '').includes('Nobody on this message is a contact'),
+    enriched?.rationale,
+  )
+
+  const domainOnly = directory({
+    domains: [['client.test', 'acct-1']],
+    accountNames: [['acct-1', 'A Client']],
+  })
+  const stranger = matchParticipants(people('new@client.test'), domainOnly)
+  check(
+    'a stranger at a mapped domain links the account and nobody',
+    stranger?.confidence === 'domain' && stranger.contactId === null,
+    JSON.stringify(stranger),
+  )
+
+  const mixed = directory({
+    contacts: [
+      ['jo@client.test', 'acct-1'],
+      ['brittany@bbm.test', null],
+    ],
+    accountNames: [['acct-1', 'A Client']],
+  })
+  check(
+    'one contact with an account beside one without still links the account',
+    matchParticipants(people('jo@client.test', 'brittany@bbm.test'), mixed)?.accountId === 'acct-1',
+  )
+
+  const ours = directory({
+    contacts: [['ryan@bealesllc.test', null]],
+    colleagues: ['ryan@bealesllc.test'],
+  })
+  check(
+    'one of our own addresses is never a client match, contact row or not',
+    matchParticipants(people('ryan@bealesllc.test'), ours) === null,
+  )
+}
+
+/**
+ * Recurring meetings, measured 2026-08-20: 40 occurrences across 11 series in a
+ * single nightly window, 35 of them still ahead. Without collapsing, the first
+ * night matching worked would have written 35 next steps for 11 meetings.
+ */
+function recurrenceChecks(check: Check): void {
+  console.log('\n  recurring series')
+
+  const NOW = Date.parse('2026-08-20T12:00:00Z')
+  const at = (when: string, series: string | null, id: string) => ({
+    id,
+    seriesMasterId: series,
+    start: { dateTime: `${when}.0000000`, timeZone: 'UTC' },
+  })
+
+  const weekly = collapseRecurringSeries(
+    [
+      at('2026-08-27T11:00:00', 'series-a', 'a3'),
+      at('2026-09-03T11:00:00', 'series-a', 'a4'),
+      at('2026-08-20T15:00:00', 'series-a', 'a2'),
+    ],
+    NOW,
+  )
+  check(
+    'five weeks of one meeting become the next one',
+    weekly.length === 1 && weekly[0].id === 'a2',
+    JSON.stringify(weekly.map((e) => e.id)),
+  )
+
+  const past = collapseRecurringSeries(
+    [
+      at('2026-08-19T11:00:00', 'series-a', 'p1'),
+      at('2026-08-20T09:00:00', 'series-a', 'p2'),
+      at('2026-08-27T11:00:00', 'series-a', 'f1'),
+    ],
+    NOW,
+  )
+  check(
+    'meetings that already happened are all kept — each one really did happen',
+    past.length === 3,
+    JSON.stringify(past.map((e) => e.id)),
+  )
+
+  const single = collapseRecurringSeries(
+    [at('2026-08-24T12:00:00', null, 's1'), at('2026-09-01T12:00:00', null, 's2')],
+    NOW,
+  )
+  check('a one-off meeting has no series and is never touched', single.length === 2)
+
+  const two = collapseRecurringSeries(
+    [
+      at('2026-08-27T11:00:00', 'series-a', 'a1'),
+      at('2026-09-03T11:00:00', 'series-a', 'a2'),
+      at('2026-08-25T10:00:00', 'series-b', 'b1'),
+      at('2026-09-01T10:00:00', 'series-b', 'b2'),
+    ],
+    NOW,
+  )
+  check(
+    'each series keeps its own next meeting',
+    two.length === 2 && two.some((e) => e.id === 'a1') && two.some((e) => e.id === 'b1'),
+    JSON.stringify(two.map((e) => e.id)),
+  )
+
+  const unreadable = collapseRecurringSeries(
+    [{ id: 'x', seriesMasterId: 'series-a', start: { dateTime: 'nonsense', timeZone: 'UTC' } }],
+    NOW,
+  )
+  check(
+    'a meeting whose clock cannot be read is kept, not silently dropped',
+    unreadable.length === 1,
+  )
+
+  // The order Graph returns them in must not decide which one survives.
+  const shuffled = collapseRecurringSeries(
+    [
+      at('2026-09-10T11:00:00', 'series-a', 'late'),
+      at('2026-08-21T11:00:00', 'series-a', 'soon'),
+      at('2026-09-03T11:00:00', 'series-a', 'mid'),
+    ],
+    NOW,
+  )
+  check(
+    'the earliest wins whatever order Graph listed them in',
+    shuffled.length === 1 && shuffled[0].id === 'soon',
+    JSON.stringify(shuffled.map((e) => e.id)),
+  )
 }
 
 async function main() {
@@ -367,16 +627,50 @@ async function main() {
   const from = new Date(Date.now() - 14 * 86_400_000).toISOString()
   const to = new Date(Date.now() + 30 * 86_400_000).toISOString()
   console.log(`\n4. Calendar for ${mailbox} (14 days back, 30 forward)`)
+  // $top was 5 until 2026-08-20, and five was enough to reach the WRONG answer:
+  // calendarView returns events in start order, the first five in this tenant
+  // happened to be one-offs, and CLAUDE.md recorded on the strength of it that
+  // every event in the tenant was a singleInstance. It is 40 occurrences across
+  // 11 series. Read the whole window and COUNT it, then show a few shapes — a
+  // sample answers "what does this look like", never "what is in here".
   const events = await graphGet(
     token,
-    `/users/${encodeURIComponent(mailbox)}/calendarView?startDateTime=${from}&endDateTime=${to}&$top=5&$select=${EVENT_FIELDS}`,
+    `/users/${encodeURIComponent(mailbox)}/calendarView?startDateTime=${from}&endDateTime=${to}&$top=200&$select=${EVENT_FIELDS}`,
   )
   if (events.error) {
     console.log(`  ERROR ${events.status}: ${events.error}`)
   } else if (events.items.length === 0) {
     console.log('  no events in that window')
   } else {
-    events.items.forEach((e, i) => report(`event ${i + 1}`, e))
+    const startsAt = (e: Record<string, unknown>): number | null => {
+      const start = (e.start as { dateTime?: string; timeZone?: string } | undefined) ?? undefined
+      if (!start?.dateTime) return null
+      try {
+        return new Date(graphTime(start.dateTime, start.timeZone)).getTime()
+      } catch {
+        return null
+      }
+    }
+    const now = Date.now()
+    const occurrences = events.items.filter(
+      (e) => e.type === 'occurrence' || e.type === 'exception',
+    )
+    const series = new Set(
+      occurrences.map((e) => String(e.seriesMasterId ?? '')).filter(Boolean),
+    )
+    const ahead = events.items.filter((e) => (startsAt(e) ?? 0) > now)
+    const kept = collapseRecurringSeries(events.items, now).filter((e) => (startsAt(e) ?? 0) > now)
+
+    console.log(
+      `  ${events.items.length} events — ${occurrences.length} are occurrences of ` +
+        `${series.size} recurring series, ${events.items.length - occurrences.length} are one-offs`,
+    )
+    console.log(
+      `  ${ahead.length} still ahead; after collapsing each series to its next meeting, ` +
+        `${kept.length} would be read as next steps`,
+    )
+    console.log('\n  the first few shapes:')
+    events.items.slice(0, 5).forEach((e, i) => report(`event ${i + 1}`, e))
   }
 
   // --- 5. The question this whole probe was worth running for ---------------
