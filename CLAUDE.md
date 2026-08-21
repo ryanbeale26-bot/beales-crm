@@ -227,7 +227,65 @@ works before more data arrived. Phase 6 and InspectQA follow.
 ## Current status
 
 **Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
-**Last session:** 2026-08-20.
+**Last session:** 2026-08-21.
+
+### What changed on 2026-08-21: a Granola note is now kept whole
+
+**Read this first if you are a later session: nothing here needed a migration**, so
+`db:verify` is still **223**, and the two probe self-tests grew instead — `granola:probe`
+14 → **30**, `graph:probe` 35 → **41**. That is where the new rules are pinned, because the
+repo still has no unit runner and both probes run with no network and no credentials.
+
+**This session ran in a cloud container with no `.env.local` and no database access**, so
+nothing below was verified in a browser or against the real data. Everything was proved by
+the self-tests, a cold build, and one component rendered to static markup by hand. Ryan's
+browser pass is still outstanding at the time of writing.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **A Granola note keeps its whole summary; an email is still cut at 500** | `granola.ts` had already downloaded the entire summary and `toSnippet` threw about two thirds of it away — no API call and no bandwidth saved by the cap, just less note. Mail stays capped because *"no full bodies, ever"* is a promise about a **mailbox**, not about text in general, and it costs nothing to keep: `graph.ts` asks only for `bodyPreview`, which Graph caps at 255, so 500 is a stated ceiling rather than an active cut |
+| **`BODY_LIMIT` is an exhaustive `Record<IngestSource, number \| null>`** | Ten entries, one per `activity_source` value, `granola` the only `null`. A new enum value makes **that object** fail to compile naming the source it is missing — the same guarantee an exhaustive switch buys, written as a table you can read. A `Partial` with a default would have been shorter and would have let a future connector inherit an answer nobody chose |
+| **…and it is keyed on the ITEM's source, never on the source descriptor** | The descriptor's `name` is a display string. One connector called `graph` emits **both** `outlook` and `outlook_calendar` items, and `fixtures.ts` emits items marked `outlook` too — so a per-descriptor limit could not express the two separately, and would have capped a fixture row and a real Graph row differently while every stored field on them was identical |
+| **Only `activities.body` changed. The mirror snippet and `next_steps.detail` are still 500** | Three call sites, one changed, and the two that did not now say so in a comment. The mirror is a **review aid**: `/review` and `/admin/ingest` are lists somebody triages, and a 1,400-character block per row turns a triage queue into a reading queue. `next_steps.detail` is graph-only in practice — a Granola note is never future-dated — and nothing renders it yet anyway |
+| **A summary is a DOCUMENT, not a paragraph, and that was measured** | One real note pulled through the Granola connector: *46 Obery St, 20 Aug inspection* — about 1,700 characters across five headed sections with bullets, nested sub-bullets and blank lines between blocks. `toSnippet` flattens all whitespace, which is right for a 500-character extract and destroys this. So `toBody` keeps the shape |
+| **Multi-line bodies were NOT new to the column** | `src/lib/import/activities.ts:144` has always joined an outcome and a next step with `\n\n`, and both render sites already carry `whitespace-pre-wrap`. `toSnippet`'s flattening was the odd one out, not the rule — which is why this needed no render change beyond the clamp |
+| **Leading indentation survives; trailing whitespace does not** | It looks like whitespace worth collapsing and is not. Once the markdown fallback has had its list markers taken off, a sub-point's **indent is the only thing left** saying it was a sub-point. Tabs become two spaces so one nesting level is one nesting level however it was typed. Found by rendering the component and reading the output, not by reading the code — the first version stripped the indent while a comment two files away claimed it was kept |
+| **CRLF is normalised FIRST, and the order is load-bearing** | Tidy the spaces before that and the stray `\r` is eaten as one of them, so the rule reads as though it never did anything |
+| **The markdown fallback is stripped, the primary path is not** | `fetchText` returns `summary_text ?? summary_markdown`, and the repo's own measured note says `summary_text` arrives plain while the markdown is *"the same content with list markers"*. Flattened into 500 characters a stray `###` never showed; stored whole it would render literally down the middle of the timeline. `stripListMarkers()` is deliberately **not** a markdown parser — heading hashes and leading bullets, nothing else |
+| **A clamp had to come with an EXPANDER, because there is no activity detail page** | `src/app/(app)/activity/` holds `actions.ts` and `page.tsx` and nothing else. The timeline `<p>` is the **only** place in the app a note can be read, so clamping without a disclosure would have stored 1,400 characters and shown 240 of them for ever |
+| **The excerpt goes in the `<summary>`, not the whole note under a `line-clamp`** | The tempting version puts the body inside the summary and toggles `group-open:line-clamp-none`. A `<summary>`'s text content is its **accessible name**, so that would have a screen reader announce the entire note as the button's label, every time, with no way past it. This way the label is bounded at ~240 characters, and the copy people select and paste is an ordinary paragraph that does not toggle when clicked |
+| **`ActivityBody` is shared, because the two render sites were byte-identical** | `activity-timeline.tsx` and `activity/page.tsx` carried the same three lines. Granola notes are stored whole now, so both would have grown the same clamp on the same day and drifted the first time only one was touched. Same argument as `ago()` |
+| **`EXCERPT_LENGTH` is 240 and is deliberately NOT `SNIPPET_LENGTH`** | One is about what gets stored and why; the other is about how much vertical space a row of a 200-row feed may take. Tying them would let a storage decision silently relay out every screen. `WORTH_HIDING = 80` on top, because a "Show all" that reveals one more line is more annoying than the line |
+| **`RawItem.text`'s doc comment had to be REWRITTEN, not left** | It promised *"the full text never lands in the database"*. That sentence is now false for Granola. Comments are treated as rules in this repo, so a stale one would have had a later session revert this thinking it was the policy |
+| **`splitName` lost the suffix a shared mailbox carries** | *"Eley, Thelma @ Charlotte"* split on the comma and produced a **first name** of "Thelma @ Charlotte"; *"Nick Deletsky / Anthony"* has no comma, so the last word won and it came out first "Nick Deletsky /", last "Anthony". Both are real, both came through the nightly ingest as contact suggestions. The spaces around the separator are required, which is the whole safety of it — `O'Brien-Smith` and an address that reached the function by accident are untouched. It can still keep the wrong half if a mailbox is ever written *"Reception / Jane Smith"*, and that is accepted: it is a name on a suggestion somebody reads and can edit before accepting |
+| **Three runs on `/admin/ingest`, the rest behind a disclosure** | The panel listed all ten it fetched and pushed the sources and the domain map off the screen. It still **fetches ten**, so the 26-hour staleness rule is untouched — that is read off `runs[0]` inside `fetchRunHealth`, before anything renders, so what is displayed cannot reach it |
+| **…and the disclosure is a SIBLING of the list** | `<details>` is not valid as a direct child of `<ol>`, so it is two lists with the disclosure between them. The summary carries a run row's own `px-2 py-2.5` and `border-b` and the second `<ol>` has no `border-t`, so the hairline rhythm runs straight through the seam open or shut. It says *"Earlier runs (7)"* — how many are **hidden**, not how many exist, because `ingest_runs` has no delete policy and ten is only the window this panel fetches |
+
+**Forward-only, and that is Ryan's call rather than a limitation.** The ~138 Granola activities
+already in the app keep their 500-character bodies: `ingestOne` short-circuits at `run.ts:195`
+on any item already `linked` with something behind it, so nightly re-runs will never revisit
+them. The door is not locked — the backfill stamped an `import_batch_id`, so undoing that batch
+at `/admin/import` and re-running `granola:backfill --commit` would bring the archive back at
+full length. It is not clean (it deletes and recreates real activities, and anything a nightly
+run ingested since carries no batch id), which is exactly why forward-only was the right call.
+
+**What it costs, measured rather than waved at.** `activities` is in the `audited` array, so
+every insert copies the whole row into `audit_log.new_values` — the body is stored **twice**.
+Ryan's ~300 KB of history and ~3.25 MB/year become roughly **600 KB and 6.5 MB/year**. It is a
+one-time doubling per note rather than a growing one: the job inserts an activity once and never
+updates it. The mirror staying at 500 is what holds it to two copies rather than three, and
+`ingested_items` is deliberately not audited. A nightly insert never *prints* a body on
+`/admin/history` either — `src/lib/audit/index.ts:36` leaves the change list empty on an insert —
+so only a hand edit of an ingested note would, and `record-history.tsx` renders that unclamped.
+Left alone deliberately: a diff has to be literal.
+
+**Two things to expect in the browser, neither of them a bug.** 122 of the 138 existing Granola
+bodies sit at exactly 500 characters, which is over the 320-character threshold, so **they get a
+disclosure too from day one** — the feed gets tidier, and if that is unwanted the threshold is
+one number. And a collapsed `<details>` still carries its full text in the DOM, so `/activity` at
+200 rows gets heavier; if that ever bites, the fix is a lower **row** limit, never a `substring()`
+in the query or a second hidden ceiling, which would be a second truncation number destined to
+drift from the first.
 
 ### What changed on 2026-08-20: the first production runs, and what they exposed
 
@@ -299,8 +357,9 @@ Contacts 99 → 98 (Brendan archived). Activities 816 → 833, `next_steps` 0 �
 
 **One thing left on `/review` deliberately: a `create_contact` suggestion for
 `thelma.eley@cbre.com` at Tufts Medicine, whose first name parsed as "Thelma @ Charlotte" from an
-Outlook display name of "Eley, Thelma @ Charlotte".** Ryan's to accept, edit or dismiss — and worth
-knowing that `splitName` can produce a name like that from a shared mailbox.
+Outlook display name of "Eley, Thelma @ Charlotte".** Ryan's to accept, edit or dismiss.
+**`splitName` was fixed on 2026-08-21** so it stops happening, but only for contacts suggested
+from then on — this suggestion and any row already created from one are a data fix.
 
 **Two things this session did NOT prove.** No calendar event has yet matched on the DOMAIN tier —
 the one that worked was a contact. And of Ryan's 11 recurring series only that one matches anything
@@ -640,8 +699,11 @@ live buildings without one**, so the site backfill has run; **134 `match_aliases
 `ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
 corpus. Ryan confirms the four Vercel environment variables are set.
 
-0. **Push.** The 2026-08-20 hardening is committed and not yet pushed. Nothing in it needs a
-   migration, so a push is the whole deployment.
+0. **The browser pass on the 2026-08-21 work.** It was built in a cloud container with no
+   database access, so the self-tests, a cold build and a hand-rendered component are all
+   that stand behind it. Check `/admin/ingest` shows three runs with *"Earlier runs (7)"*,
+   and that a Granola note ingested after the change reads as a collapsed excerpt on
+   `/activity` that opens to the whole summary with its line breaks intact.
 1. **Map a domain that appears on real meetings**, and the calendar starts paying for itself:
    `bidplymouth.org`, `bbmfacility.com`, `bostonbuildingmaintenance.com`. Also worth deciding
    whether **BBM Facility Services** should be an account at all — Brittany Hampton is its CEO and
@@ -819,7 +881,8 @@ Phase 7c added:
 | `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
 | `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
-`db:verify` grew from 118 to **157 checks**, and is **223** today.
+`db:verify` grew from 118 to **157 checks**, and is **223** today — unchanged by the
+2026-08-21 work, which needed no migration.
 
 ### Tested end to end, 2026-08-17
 
@@ -1284,9 +1347,9 @@ a contract that ended three months ago for exactly this reason.
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
 | `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **223 checks** |
-| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **35** checks with no network — redaction, the timezone trap, the confidence tiers and the recurring-series collapse |
+| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **41** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse and the shared-mailbox display names |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
-| `npm run granola:probe -- --selftest` | The 14 hazard cases only. No network, no database, no credentials — runs anywhere |
+| `npm run granola:probe -- --selftest` | **30** checks: the hazard cases for what a title MATCHES, plus what a matched note BECOMES — the per-source body limit, the whitespace rules and the timeline's excerpt threshold. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
 | `npm run user:create -- --email … --name … --role …` | Creates one of the five accounts. One of two places the service role key is used |
 | `npm run user:remove -- --email … --reassign-to …` | Removes a profile that never belonged in the app. **Dry run unless `--commit`**, and it REFUSES anyone with a single `audit_log` entry — deactivate those instead. Reassigns everything they own first, then deletes; Postgres refuses the whole delete if anything still points at them |
@@ -1702,6 +1765,14 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-20 | **The probe counts the window before it samples it** | `$top` was 5, and five was enough to reach the wrong answer: `calendarView` returns events in start order, the first five happened to be one-offs, and this file recorded on the strength of it that every event in the tenant was a single instance. It is 40 occurrences across 11 series. A sample answers what something looks like and never what is in there — the same mistake as counting a total from the view that computes it |
 | 2026-08-20 | **Removing a profile is possible, refused by default, and cannot half-finish** | Deactivating stays the way somebody leaves, and the audit log is the test: anybody with a single entry cannot be removed at any flag, which is why the QA logins are kept. Brendan Mulligan had none, so he could go — and had to, because a deactivated profile drops out of `colleaguesByEmail` and starts reading as an outside client on every meeting he is on. His CONTACT row was archived rather than deleted: it carries two coaching notes about his performance, and soft-delete-only is the standing rule. The delete is safe by construction rather than by care — every FK to `profiles` is NO ACTION, so Postgres refuses the whole thing and names the constraint if anything still points at them |
 | 2026-08-20 | Vercel Hobby cron fires within the hour, not on it | 07:00 and 09:00 in `vercel.json` landed at 07:51 and 09:45. A late run is not a broken one, and staleness — nothing for over 26 hours — remains the signal that means something |
+| 2026-08-21 | **How much of a body is stored is a property of the SOURCE, and mail is the one that stays capped** | *"No full bodies, ever"* was a promise about a **mailbox** and it is kept exactly as it was — `graph.ts` asks only for `bodyPreview`, so there is no full message to store even if somebody wanted one. A Granola note is not a mailbox: it is a summary somebody at Beale's dictated about a Beale's building, `granola.ts` already downloaded all of it, and the 500-character cap was throwing about two thirds of the average note away for no saving of any kind. `BODY_LIMIT` is an exhaustive `Record` over the enum so a new source has to answer for itself rather than inherit a number nobody chose |
+| 2026-08-21 | …and it is keyed on the ITEM's source, never on the source descriptor | The descriptor `runIngest` is handed carries a display `name`. One connector called `graph` emits **both** `outlook` and `outlook_calendar` items, and the fixture source emits items marked `outlook` too — so keying a storage policy off that string could not express mail and calendar separately, and would have capped a fixture row and a real Graph row differently while every field anyone can see on them was identical |
+| 2026-08-21 | The mirror snippet and `next_steps.detail` stay at 500 while the activity body does not | Not an oversight, and each call site now says so. The mirror is a **review aid**: `/review` and `/admin/ingest` are lists somebody triages, and a 1,400-character block per row turns a triage queue into a reading queue. It is also what holds the same text at two stored copies rather than three, since `activities` is audited and `ingested_items` deliberately is not. `next_steps.detail` is graph-only in practice — a Granola note is never future-dated — and nothing renders it yet |
+| 2026-08-21 | **A Granola summary keeps its shape, because it is a document rather than a paragraph** | Measured on a real note before deciding: about 1,700 characters across five headed sections, with bullets, nested sub-bullets and blank lines. `toSnippet` flattens all whitespace, which is right for a 500-character extract and destroys this. Multi-line bodies were never new to the column either — the workbook importer has always joined an outcome and a next step with a blank line, and both render sites already carried `whitespace-pre-wrap`, so the flattening was the odd one out. Leading indentation survives on purpose: once the markdown fallback loses its list markers, a sub-point's indent is the only thing left saying it was one |
+| 2026-08-21 | **A clamp on the timeline had to come with an expander, because there is no activity detail page** | `src/app/(app)/activity/` holds `actions.ts` and `page.tsx` and nothing else, so that paragraph is the only place in the whole app a note can be read. Clamping without a disclosure would have stored 1,400 characters and shown 240 of them for ever. The excerpt goes in the `<summary>` rather than the whole note under a `line-clamp`, because a summary's text content is its **accessible name** — the tempting version would have a screen reader announce the entire note as the button's label, every time, with no way past it |
+| 2026-08-21 | `EXCERPT_LENGTH` is its own number and is deliberately not `SNIPPET_LENGTH` | One is about what gets stored and why; the other is about how much vertical space a row of a 200-row feed may take. Tying them would let a storage decision silently relay out every screen. The same reasoning says that if the feed ever gets too heavy the fix is a lower **row** limit — never a `substring()` in the query, which would be a second truncation number destined to disagree with the first |
+| 2026-08-21 | **Three runs on the Ingest screen, but still ten fetched** | The panel listed everything it fetched and pushed the sources and the domain map off the screen. What is *rendered* was always independent of the 26-hour staleness rule — that is computed from `runs[0]` inside `fetchRunHealth` before anything renders — so the fetch was left alone rather than lowered, which keeps the two facts from ever needing to agree. The disclosure says how many are **hidden**, not how many exist: `ingest_runs` has no delete policy and ten is only this panel's window |
+| 2026-08-21 | A display name loses the site or delegate a shared mailbox carries | Exchange writes *"Eley, Thelma @ Charlotte"* and *"Nick Deletsky / Anthony"*, and both reached `/review` as contact suggestions with the suffix welded into a first name. The spaces around the separator are required, which is the whole safety of the rule — a hyphenated surname and an address that arrived by accident are untouched. It can still keep the wrong half if a mailbox is ever written the other way round, and that is accepted rather than solved: it is a name on a suggestion somebody reads and can edit before accepting, so the cost is a correction, not a bad row |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
