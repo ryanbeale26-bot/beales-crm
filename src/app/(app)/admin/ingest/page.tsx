@@ -6,7 +6,7 @@ import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { died, fetchRunHealth, type RunRow } from '@/lib/ingest/run-health'
 import { ago } from '@/lib/format'
 import { Stat } from '@/components/report'
-import { hasGranolaEnv, hasGraphEnv, hasIngestEnv } from '@/lib/env'
+import { deployedCommit, hasGranolaEnv, hasGraphEnv, hasIngestEnv } from '@/lib/env'
 import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 import { createClient } from '@/lib/supabase/server'
 
@@ -108,6 +108,8 @@ export default async function IngestAdminPage() {
       </div>
     )
   }
+
+  const commit = deployedCommit()
 
   const [
     domains,
@@ -313,6 +315,17 @@ export default async function IngestAdminPage() {
         Read from this deployment&rsquo;s own environment. A variable added in Vercel only takes
         effect on the next deployment, so if one reads &ldquo;not set&rdquo; after you added it,
         redeploy.
+        {commit ? (
+          <>
+            {' '}
+            Built from <code className="font-mono">{commit.sha}</code>
+            {commit.subject ? ` — ${commit.subject}` : ''}.
+          </>
+        ) : (
+          // Local. There is no deployment to name, and saying so beats an empty
+          // gap that reads like the variable failed to arrive.
+          ' Running locally, so there is no deployed commit to name.'
+        )}
       </p>
 
       {/* Whether the job ran at all comes before what it found. Until

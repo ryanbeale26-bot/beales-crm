@@ -145,3 +145,30 @@ export function siteUrl(): string {
 
   return 'http://localhost:3000'
 }
+
+/**
+ * The commit this deployment was built from, or null when there is no
+ * deployment to name — which is every local run.
+ *
+ * Written after a real incident on 2026-08-21. The recurring-meeting collapse
+ * was committed on the 20th and pushed on the 21st, and the nightly run in
+ * between wrote four next steps from one weekly series. Nothing anywhere in the
+ * app could answer "is the fix I wrote yesterday actually live?", so the session
+ * that found it started by suspecting Microsoft Graph. Vercel builds from `main`
+ * on push, so a commit that is merely committed is a commit that is not running.
+ *
+ * `VERCEL_GIT_COMMIT_SHA` and `VERCEL_GIT_COMMIT_MESSAGE` are plain server
+ * variables (no NEXT_PUBLIC_ prefix), set automatically on every deployment —
+ * the same mechanism siteUrl() leans on for VERCEL_PROJECT_PRODUCTION_URL. The
+ * message is the full commit body, so only its first line is worth showing.
+ */
+export function deployedCommit(): { sha: string; subject: string | null } | null {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA?.trim()
+  if (!sha) return null
+
+  const message = process.env.VERCEL_GIT_COMMIT_MESSAGE?.trim()
+  return {
+    sha: sha.slice(0, 7),
+    subject: message ? (message.split('\n')[0]?.trim() ?? null) : null,
+  }
+}
