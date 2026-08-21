@@ -3,7 +3,7 @@ import { DomainMap, type Candidate, type DomainRow } from './domain-map'
 import { ProfileAliases, type ProfileAliasRow } from './profile-aliases'
 import { RelinkUpload } from './relink-upload'
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
-import { died, fetchRunHealth } from '@/lib/ingest/run-health'
+import { died, fetchRunHealth, type RunRow } from '@/lib/ingest/run-health'
 import { ago } from '@/lib/format'
 import { Stat } from '@/components/report'
 import { hasGranolaEnv, hasGraphEnv, hasIngestEnv } from '@/lib/env'
@@ -38,6 +38,51 @@ function Source({
         {on ? 'Configured' : 'Not configured'}
       </span>
       <span className="text-muted-foreground w-full text-xs">{note}</span>
+    </li>
+  )
+}
+
+/** How many runs are on the page before the rest go behind a disclosure. Ten are
+ *  fetched and ten stay fetched — staleness is read off the newest one inside
+ *  fetchRunHealth, before anything is rendered, so this number cannot reach it. */
+const SHOWN_RUNS = 3
+
+/** One recorded run.
+ *
+ *  Lifted out of the list rather than left inline because there are two lists
+ *  now, the recent ones and the ones behind the disclosure, and a row that is
+ *  written twice is a row that eventually reads two different ways. */
+function RunLine({ run }: { run: RunRow }) {
+  return (
+    <li className="border-border border-b px-2 py-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-medium">
+          {died(run)
+            ? 'Never finished'
+            : run.ok === null
+              ? 'Running now'
+              : run.ok
+                ? 'Clean'
+                : 'Finished with errors'}
+        </span>
+        <span className="text-muted-foreground text-xs">
+          {ago(run.startedAt)}
+          {run.ranForMs !== null && ` · ${(run.ranForMs / 1000).toFixed(1)}s`}
+          {run.sources.length > 0 && ` · ${run.sources.join(', ')}`}
+        </span>
+      </div>
+      <div className="text-muted-foreground mt-0.5 text-xs">
+        {run.seen} seen · {run.ingested} new · {run.alreadySeen} already known ·{' '}
+        {run.activitiesCreated} activities · {run.nextStepsCreated} next steps ·{' '}
+        {run.suggestionsWritten} suggestions
+        {run.stoppedEarly && ' · stopped at the deadline'}
+        {run.truncated.length > 0 && ` · ${run.truncated.join(', ')} read only part`}
+      </div>
+      {run.errors.map((error) => (
+        <p key={error} className="text-destructive mt-1 text-xs">
+          {error}
+        </p>
+      ))}
     </li>
   )
 }
@@ -290,39 +335,33 @@ export default async function IngestAdminPage() {
             </p>
           )}
           <ol className="border-border border-t text-sm">
-            {health.runs.map((run) => (
-              <li key={run.id} className="border-border border-b px-2 py-2.5">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-medium">
-                    {died(run)
-                      ? 'Never finished'
-                      : run.ok === null
-                        ? 'Running now'
-                        : run.ok
-                          ? 'Clean'
-                          : 'Finished with errors'}
-                  </span>
-                  <span className="text-muted-foreground text-xs">
-                    {ago(run.startedAt)}
-                    {run.ranForMs !== null && ` · ${(run.ranForMs / 1000).toFixed(1)}s`}
-                    {run.sources.length > 0 && ` · ${run.sources.join(', ')}`}
-                  </span>
-                </div>
-                <div className="text-muted-foreground mt-0.5 text-xs">
-                  {run.seen} seen · {run.ingested} new · {run.alreadySeen} already known ·{' '}
-                  {run.activitiesCreated} activities · {run.nextStepsCreated} next steps ·{' '}
-                  {run.suggestionsWritten} suggestions
-                  {run.stoppedEarly && ' · stopped at the deadline'}
-                  {run.truncated.length > 0 && ` · ${run.truncated.join(', ')} read only part`}
-                </div>
-                {run.errors.map((error) => (
-                  <p key={error} className="text-destructive mt-1 text-xs">
-                    {error}
-                  </p>
-                ))}
-              </li>
+            {health.runs.slice(0, SHOWN_RUNS).map((run) => (
+              <RunLine key={run.id} run={run} />
             ))}
           </ol>
+          {health.runs.length > SHOWN_RUNS && (
+            /* A sibling of the list, not a child: <details> is not valid inside
+               an <ol>. The summary carries the same padding and bottom hairline
+               a run row does, and the second list has no border-t, so the rhythm
+               runs straight through the seam whether it is open or shut.
+
+               It says how many are hidden, not how many exist. ingest_runs has
+               no delete policy and grows for ever; ten is the window this panel
+               fetches, so "Earlier runs (7)" is honest and "7 in total" would
+               not be. */
+            <details>
+              <summary className="text-muted-foreground border-border cursor-pointer border-b px-2 py-2.5 text-sm">
+                {health.runs.length - SHOWN_RUNS === 1
+                  ? 'Earlier run (1)'
+                  : `Earlier runs (${health.runs.length - SHOWN_RUNS})`}
+              </summary>
+              <ol className="text-sm">
+                {health.runs.slice(SHOWN_RUNS).map((run) => (
+                  <RunLine key={run.id} run={run} />
+                ))}
+              </ol>
+            </details>
+          )}
         </>
       )}
 
