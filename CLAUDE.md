@@ -808,9 +808,9 @@ corpus. Ryan confirms the four Vercel environment variables are set.
    BBM subcontracts non-union work to Beale's, so it is a source of revenue rather than a customer
    in the usual sense. Left as a contact-only link for now, deliberately, so nothing appears in MRR
    that Ryan did not put there.
-2. **Give `jfallon@` and `lwebber2@bwh.harvard.edu` an account, or map `bwh.harvard.edu`.** Both are
-   accountless contacts, so a message naming *both* of them is refused as ambiguous while a message
-   naming one is linked. That is the rule working, and the fix is one field.
+2. ~~**Give `jfallon@` and `lwebber2@bwh.harvard.edu` an account, or map `bwh.harvard.edu`.**~~ —
+   **done.** `bwh.harvard.edu` is mapped, **20 domains are mapped and `v_domain_candidates` is
+   empty**, measured 2026-08-21. There is nothing left for anyone to map by hand.
 3. **Invite the team.** Phases 1–6 are done and there is nothing structural left in the way.
    Onboarding is `npm run user:password`, not a magic link — see the Defender Safe Links note
    below, which will otherwise burn the token before anybody clicks it.
@@ -1721,10 +1721,20 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~3–4 real samples~~ — taken 2026-08-19 with `npm run graph:probe`, and they changed three things. The parser was written from them, not from the docs.
 - [x] ~~**No calendar event has become a `next_step` yet.**~~ — **done 2026-08-20.** *Monthly BI Inspection*, due 19 Sep, owner Ryan, contact Brittany Hampton, no account. It could not happen before because both contacts on that meeting were accountless, which the matcher treated as nobody.
 - [x] ~~**The recurring-meeting rule has never met real data.**~~ — **it has now, and the assumption behind it was wrong.** 40 occurrences across 11 series in one nightly window. `originalStart` is populated; each occurrence carries its own `iCalUId`; `seriesMasterId` is what groups them. One next step per series, rolling forward. **And it is now proved on real data, which it was not when this line was first ticked** — the probe reads 70 events, 53 occurrences across 11 series, 39 ahead, **14 after collapsing**, which is 11 series plus 3 future one-offs. The four-next-steps incident of 2026-08-21 was the code not being deployed, not the rule being wrong.
-- [ ] **No calendar event has matched on the DOMAIN tier.** The one that worked matched a contact. `bidplymouth.org`, `bbmfacility.com` and `bostonbuildingmaintenance.com` all appear on real meetings and are unmapped — mapping any of them is the cheapest way to test it.
+- [x] ~~**No calendar event has matched on the DOMAIN tier.**~~ — **five have, measured 2026-08-21**, four of them becoming next steps, once Ryan mapped `bidplymouth.org`. Calendar `matched_by` reads 5 domain, 2 exact. `bbmfacility.com` and `bostonbuildingmaintenance.com` stay unmapped **on purpose** — BBM subcontracts to Beale's rather than buying from it, so mapping them would file a supplier in the customer book.
 - [ ] **10 of the 11 recurring series match nothing** and leave no trace at all, because Ryan organises them and `recordUnknownSender` skips a colleague. That is correct, and it does mean the calendar is quieter in the app than it looks in Outlook.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
+
+**Opened 2026-08-21:**
+- [ ] **There is NO way to complete or dismiss a next step in the app.** `next_steps` has a
+      `status` enum of `open` / `done` / `dismissed`, a `completed_at` column and an `activity_id`
+      column for what the meeting became — and nothing anywhere writes any of them. The three
+      stale `46 Obery St` rows had to be dismissed from the Supabase SQL editor, which is why
+      their `audit_log.changed_by` is null. The table is `member_rw`, so this needs no migration
+      and no new policy.
+- [ ] **14 `ingested_items` are `needs_review`** — Granola titles naming two records, waiting on
+      one alias each. `/admin/ingest` lists them; 134 aliases exist already.
 
 **Opened or closed by Phase 7c:**
 - [x] ~~Alias `ryanbeale26@gmail.com` to Ryan's profile~~ — done, through `profile_email_aliases`.
@@ -1738,8 +1748,8 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       each — 851 Middle St by suite, 295 Old Oak, 143 Longwater / SSMC, 186 Tremont, Stetson,
       Kneeland St, Foxrock building 42, Gener8, Elevation Apartments. Run the probe and work down
       the list. Some of these have no building record at all, which is the deeper fix.
-- [ ] **Is `46 Oberry St` a typo for `46 Obery St`?** Every Granola title says Obery. Correcting the
-      building would fix eight or more notes at once; an alias would paper over it.
+- [x] ~~**Is `46 Oberry St` a typo for `46 Obery St`?**~~ — yes, and Ryan corrected the building. It is
+      now `BILH - 46 Obery St`, and the weekly inspection meeting matches Beth Israel (BIDMC).
 - [ ] **`797 Main St + Industrial Park`** is one building record with two addresses in one field,
       named after its own account. Worth splitting or renaming.
 - [ ] Whether a **closed-won** deal should be able to lend its name to the matcher. Today only open
