@@ -14,7 +14,11 @@ import type { IngestSource, MatchConfidence, Participant, RawItem, Supabase } fr
  * a link is applied automatically only when it is a fact, never when it is a
  * good guess.
  *
- *   exact   — an address equals exactly one live contact's email.
+ *   exact   — an address equals exactly one live contact's email. Their account
+ *             comes with them when they have one; when they do not, the CONTACT
+ *             is linked and the account is left null, because a half-filled
+ *             contact record is a reason to say less, not a reason to say
+ *             nothing. 63 of 99 live contacts have no account.
  *   domain  — the address's domain maps to exactly one account. The ACCOUNT is
  *             linked and nothing else: which building, or which deal, is still
  *             a guess even when the company is certain.
@@ -230,9 +234,10 @@ export type Match = {
   /** What the matched record is called, for a screen or a log line. Equal to
    *  accountName on a participant match, where the account IS the record. */
   label?: string
-  /** Only ever set on an exact match to a single contact. A meeting with three
-   *  people from one company links the company, and leaves "which of them" to
-   *  a person. */
+  /** Set when EXACTLY ONE contact was matched by address, on either tier — a
+   *  meeting with three people from one company links the company and leaves
+   *  "which of them" to a person. On the domain tier it used to be hardcoded
+   *  null, which threw away a person we had already identified. */
   contactId: string | null
   /** Set by a title match. A participant match never guesses which building or
    *  which deal, even when the company is certain. */
@@ -298,6 +303,20 @@ export function matchParticipants(participants: Participant[], dir: Directory): 
   // nothing is linked, and the domain tier is not a tie-breaker for it either.
   if (contactAccounts.size > 1) return null
 
+  // Everything still matched is a contact with NO account, and until 2026-08-20
+  // that meant nothing at all: `contactAccounts` filters the nulls out, so an
+  // accountless contact contributed nothing to it, and a message from somebody
+  // we demonstrably hold fell straight past the domain tier into the strangers
+  // tray. 63 of the 99 live contacts have no account and 47 of those have an
+  // address, so this was most of the contact book. It was doing it to
+  // meghan.szafran@cancer.org — a contact since the August import — every night,
+  // in production, with the tray on /admin/ingest calling her a stranger.
+  //
+  // Held rather than returned, because an ACCOUNT is worth more than a person:
+  // the domain tier below keeps first refusal, and now carries this contact with
+  // it rather than always answering null.
+  const soleContact = matchedContacts.size === 1 ? [...matchedContacts.values()][0] : null
+
   // --- domain --------------------------------------------------------------
   const domainAccounts = new Map<string, string>()
   for (const participant of external) {
@@ -316,8 +335,32 @@ export function matchParticipants(participants: Participant[], dir: Directory): 
       confidence: 'domain',
       accountId,
       accountName,
-      contactId: null,
-      rationale: `Nobody on this message is a contact yet, but ${domain} is ${accountName}.`,
+      contactId: soleContact?.id ?? null,
+      rationale: soleContact
+        ? `${[...matchedAddresses][0]} is a contact with no account, and ${domain} is ${accountName}.`
+        : `Nobody on this message is a contact yet, but ${domain} is ${accountName}.`,
+    }
+  }
+
+  // --- a known person, at a company we do not hold --------------------------
+  // An address is a fact about a person even when their contact record is
+  // half-filled, so this is `exact` and not a guess. What is genuinely unknown
+  // is the company, and null says so rather than inventing one: accountId has
+  // been nullable since 7c, and set_activity_account() fills it the day that
+  // contact gains an account.
+  //
+  // TWO accountless contacts is still nothing, deliberately. Picking one of them
+  // is exactly the guess this tier exists to refuse — and it is why the monthly
+  // BBM inspection stayed unmatched, with Brittany Hampton on it alongside
+  // Brendan Mulligan, a former colleague who drops out of colleaguesByEmail the
+  // moment his profile is deactivated and reads as a second client from then on.
+  if (soleContact) {
+    return {
+      confidence: 'exact',
+      accountId: null,
+      accountName: 'no account yet',
+      contactId: soleContact.id,
+      rationale: `${[...matchedAddresses][0]} is a contact, but is not linked to an account.`,
     }
   }
 
