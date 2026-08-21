@@ -13,6 +13,7 @@
     "user:create": "node scripts/create-user.mjs",
     "sites:backfill": "node --conditions=react-server --import tsx scripts/backfill-sites.ts",
     "user:password": "node scripts/set-password.mjs",
+    "user:remove": "node scripts/remove-user.mjs",
     "granola:probe": "node --conditions=react-server --import tsx scripts/granola-probe.ts",
     "graph:probe": "node --conditions=react-server --import tsx scripts/graph-probe.ts",
     "granola:backfill": "node --conditions=react-server --import tsx scripts/granola-backfill.ts"
