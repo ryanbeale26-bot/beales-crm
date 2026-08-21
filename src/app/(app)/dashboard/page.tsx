@@ -1,12 +1,13 @@
 import Link from 'next/link'
 
+import { NextStepStrip } from './next-step-strip'
 import { EmptyState, PageHeader, SectionTitle } from '@/components/page-header'
 import { Bar, HealthDot, Stat } from '@/components/report'
 import { count, date, HEALTH_LABELS, money, percent } from '@/lib/format'
 import {
+  fetchOverdueNextSteps,
   fetchTodaysMeetings,
   fetchUpcomingNextSteps,
-  type TodayMeeting,
 } from '@/lib/ingest/next-steps'
 import { fetchMyFocus } from '@/lib/reports/my-focus'
 import { createClient } from '@/lib/supabase/server'
@@ -25,52 +26,13 @@ import { createClient } from '@/lib/supabase/server'
  *    reporting a small number quietly would be the single fastest way to lose
  *    this team's trust in the thing.
  */
-/**
- * "Thu 27 Aug", or "Thu 27 Aug, 7:00 AM" when there is a real time on it.
- *
- * No year, deliberately: nothing in this list is more than a few weeks out and
- * "2026" in a right-hand column at text-xs is noise. Today's meetings show the
- * time alone, because the day is the heading.
- */
-function whenLabel(meeting: TodayMeeting): string {
-  if (!meeting.dueAt) return 'no date'
-  const at = new Date(meeting.dueAt)
-  const day = at.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
-  if (meeting.allDay) return day
-  return `${day}, ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-}
-
-/** One line of the strip. Shared by Today and Coming up so the two cannot drift
- *  apart; only the right-hand label differs. */
-function MeetingRow({ meeting, when }: { meeting: TodayMeeting; when: string }) {
-  return (
-    <div className="border-border flex items-center justify-between gap-3 border-b px-1 py-1.5 last:border-b-0">
-      <div className="min-w-0">
-        <span className="truncate text-sm font-medium">{meeting.title}</span>
-        {(meeting.accountName ?? meeting.contactName) && (
-          <p className="text-muted-foreground mt-0.5 truncate text-xs">
-            {meeting.accountId ? (
-              <Link href={`/accounts/${meeting.accountId}`} className="underline">
-                {meeting.accountName}
-              </Link>
-            ) : (
-              meeting.contactName
-            )}
-          </p>
-        )}
-      </div>
-      <span className="text-muted-foreground shrink-0 text-xs">{when}</span>
-    </div>
-  )
-}
-
 export default async function DashboardPage() {
   const supabase = await createClient()
 
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  const [me, focus, today, upcoming, review] = await Promise.all([
+  const [me, focus, today, upcoming, overdue, review] = await Promise.all([
     user
       ? supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -81,6 +43,12 @@ export default async function DashboardPage() {
     // exactly this), and asking for it afterwards would put a second round trip
     // on the critical path of the first screen anybody opens.
     user ? fetchUpcomingNextSteps(supabase, user.id) : Promise.resolve([]),
+    // What slipped. Fetched every time rather than only when today is empty:
+    // it is the one section that must never be gated, and it is the same
+    // indexed query read backwards.
+    user
+      ? fetchOverdueNextSteps(supabase, user.id)
+      : Promise.resolve({ meetings: [], total: 0 }),
     supabase
       .from('ingest_suggestions')
       .select('*', { count: 'exact', head: true })
@@ -89,8 +57,12 @@ export default async function DashboardPage() {
   const firstName = me.data?.full_name?.split(' ')[0] ?? null
   const waiting = review.count ?? 0
   const hasToday = Boolean(today && today.meetings.length > 0)
-  // Only when there is nothing on today — see the comment on the strip itself.
-  const showUpcoming = !hasToday && upcoming.length > 0
+  // Only when there is nothing else in the strip — see the comment on the strip
+  // itself. Overdue joined that condition when it was added: it is unbounded
+  // where today is not, and Still open plus Coming up is ten rows above Top
+  // focus on the first screen anybody opens. Overdue drains, so Coming up comes
+  // back on its own.
+  const showUpcoming = !hasToday && overdue.meetings.length === 0 && upcoming.length > 0
 
   const [
     { data: coverage, error: coverageError },
@@ -147,87 +119,15 @@ export default async function DashboardPage() {
         <p className="text-destructive text-sm">Could not load the dashboard: {error.message}</p>
       )}
 
-      {/*
-        Today. This is the half of Ryan's old spreadsheet dashboard that rows
-        18–25 promised and never delivered — "Meetings Today" and "Client
-        Matches", which were never two things: the second is how many of the
-        first belong to a client we know.
-
-        It renders only when there is something to say. Four of the five people
-        have never signed in, and a permanently empty strip at the top of the
-        first screen they ever see is worse than no strip.
-      */}
-      {(hasToday || showUpcoming || waiting > 0) && (
-        <div className="border-border mb-8 rounded-[3px] border p-3">
-          {hasToday && today && (
-            <>
-              <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                <h2 className="text-base font-semibold">Today</h2>
-                <span className="text-muted-foreground text-xs">
-                  {today.matched} of {today.meetings.length} with a client we know
-                </span>
-              </div>
-              <div className="border-border border-t">
-                {today.meetings.map((meeting) => (
-                  <MeetingRow
-                    key={meeting.id}
-                    meeting={meeting}
-                    when={
-                      meeting.allDay || !meeting.dueAt
-                        ? 'all day'
-                        : new Date(meeting.dueAt).toLocaleTimeString([], {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })
-                    }
-                  />
-                ))}
-              </div>
-            </>
-          )}
-
-          {/*
-            Nothing on today, so the next few things instead.
-
-            Until 2026-08-21 fetchUpcomingNextSteps() was written, exported and
-            called from nowhere, which meant NO screen anywhere showed a next
-            step before the morning it happened. A meeting six days out was
-            invisible — which is how four wrong next steps for one weekly series
-            sat on the dashboard unnoticed. Showing them only when today is empty
-            keeps the strip short, and it is what the function was built for.
-          */}
-          {showUpcoming && (
-            <>
-              <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                <h2 className="text-base font-semibold">Coming up</h2>
-                <span className="text-muted-foreground text-xs">Nothing on today</span>
-              </div>
-              <div className="border-border border-t">
-                {upcoming.map((meeting) => (
-                  <MeetingRow key={meeting.id} meeting={meeting} when={whenLabel(meeting)} />
-                ))}
-              </div>
-            </>
-          )}
-
-          {waiting > 0 && (
-            <p
-              className={
-                hasToday || showUpcoming
-                  ? 'text-muted-foreground mt-2.5 text-sm'
-                  : 'text-muted-foreground text-sm'
-              }
-            >
-              The nightly job left {waiting} {waiting === 1 ? 'thing' : 'things'} it would not act
-              on by itself.{' '}
-              <Link href="/review" className="underline">
-                Have a look
-              </Link>{' '}
-              — or don&apos;t; they expire on their own.
-            </p>
-          )}
-        </div>
-      )}
+      <NextStepStrip
+        overdue={overdue.meetings}
+        overdueTotal={overdue.total}
+        today={today?.meetings ?? []}
+        matched={today?.matched ?? 0}
+        upcoming={upcoming}
+        showUpcoming={showUpcoming}
+        waiting={waiting}
+      />
 
       {/*
         The personal half. Everything below this is the company's numbers,

@@ -1,7 +1,11 @@
 /**
- * The dashboard's own skeleton. It runs eight queries and is the first thing
- * anybody sees after signing in, so it is worth showing its actual shape —
- * two personal panels over six tiles — rather than the generic list.
+ * The dashboard's own skeleton. It is the heaviest screen in the app and the
+ * first thing anybody sees after signing in, so it is worth showing its actual
+ * shape — two personal panels over six tiles — rather than the generic list.
+ *
+ * Deliberately no longer says how many queries it runs. It said "eight" from
+ * the day it was written and the page was on twelve before anybody noticed,
+ * which is the same dead number this app refuses on every screen it renders.
  */
 export default function DashboardLoading() {
   return (
