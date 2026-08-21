@@ -229,6 +229,81 @@ works before more data arrived. Phase 6 and InspectQA follow.
 **Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
 **Last session:** 2026-08-21.
 
+### What changed on 2026-08-21: a next step can finally be closed
+
+**The strip built earlier the same day could only ever fill up.** Nothing anywhere in the app
+wrote `next_steps.status`, `completed_at` or `activity_id` — the only writer was the nightly
+ingest, which inserts and never updates. The two rows ever closed were dismissed from the
+Supabase SQL editor, which has no `auth.uid()`, which is why they read as "changed by —".
+
+And there was a second half nobody had noticed: `fetchUpcomingNextSteps` filters
+`due_at >= now` while Today is a midnight-to-midnight window, so **a meeting nobody marked
+done vanished the following morning and never came back**. A Done button without an overdue
+surface would have left rows that could never be reached at all.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **"Still open" is its own section and is NOT gated on today being empty** | Unlike Coming up. The day you have five meetings is exactly the day yesterday's gets forgotten. It cannot become permanent furniture either, because it **drains**: closing what is on screen brings the next five within reach, so no separate `/next-steps` page is needed and none was built |
+| **Most recent first — the opposite of the other two sections** | Oldest-first fills the cap of five with the stalest rows and hides yesterday's meeting behind "and N more". Yesterday's is the one you can still answer |
+| **The overflow count comes off the SAME query**, via `{ count: 'exact' }` | Two queries counting one number is how the two eventually disagree, and this one tells you how wrong the section is about itself |
+| **Overdue rows are labelled with `ago()`, not a date** | "2 days ago" answers the question an overdue row actually raises. `ago()` was already the shared phrasing for the activity timeline and record history, and it puts the year back on anything past a month — which is exactly where `whenLabel()`'s "no year" rule would have started lying |
+| **Done writes `status` and `completed_at`. It does NOT write `activity_id`** | Ryan's call and the right one. Required fields are the enemy, and a picker is worse than a required field because it is a search — one that would be **empty most times you opened it**, because the activity usually does not exist yet when you mark the meeting done (the Granola note lands that night, the email later). The honest way to fill that column is a **join at ingest time** on `(source, external_id)`, which the next step and the activity already share from the same calendar event. A judgement nobody has to make, rather than a picker nobody uses |
+| **Closing a next step CANNOT cause the ingest to re-create it** | `run.ts:195` short-circuits on `existing.status === 'linked' && (existing.activity_id \|\| existing.next_step_id)` — which tests that the row still **exists**, not that it is open. This is why nothing here may ever become a delete |
+| **…but Dismiss means "not this week", not "never again"** | `collapseRecurringSeries` keeps the earliest occurrence still ahead, so while the one you dismissed is still in the future the dismissal holds and nothing slides in behind it. Once its start time passes, the next occurrence becomes earliest-ahead, gets its own `external_id`, and arrives as a new next step. That is correct and it is not obvious |
+| **A closed row STAYS IN PLACE, muted, with an Undo** | Nothing jumps under the cursor mid-tap; the section counts stay true to what is on screen without recomputing; and a mis-tapped Dismiss is recoverable, which it was not before — the only way back would have been the SQL editor again, the very thing this session exists to remove |
+| **…so `setNextStepStatus` is the ONE action in the app with no `revalidatePath`** | Revalidating re-renders the dashboard and drops the row out of the strip the instant it is closed, taking the Undo with it. It is safe precisely because **nothing else on any screen reads `next_steps`** — one reader file, one page. The reason is written into the action, because a missing `revalidatePath` otherwise reads as an omission somebody should fix |
+| **The refill is a button, not an automatic refresh** | Closing the last visible row could refresh and pull in the next five — and would delete the Undo on the five you just closed. So it is offered, and only once there is nothing left on screen to undo into |
+| **`.eq('owner_id')` on the update, with `.select('id')` and an explicit refusal** | Without the select, a row that is not yours updates **zero** rows and PostgREST still reports success — the strip would say "Marked done" over a write that never happened. `db:verify` now asserts out loud that any member *can* close another member's next step, so nobody mistakes the owner filter for a security boundary. It is app policy: closing somebody else's work silently is rude, not forbidden |
+| **Coming up now also waits for overdue to be empty** | Still open plus Coming up is ten rows above *Top focus* on the first screen anybody opens, which is the same argument that gated Coming up on Today in the first place. Overdue drains, so Coming up comes back on its own |
+| **The whole strip became one client component** | The headings carry counts and a count that disagrees with the rows beneath it is worse than no count, so rows and counts have to live together. A per-row button island cannot mute its own parent row either. The **policy** — which sections may appear — stays in `page.tsx` and arrives as props |
+| **`TodayMeeting` was renamed `NextStep`** | The name was already wrong (`fetchUpcomingNextSteps` never filtered `origin`) and an Overdue section that will one day hold a written commitment made it worse |
+| **A row's title is a `<p>`, not the `<span>` it was** | `truncate` sets `overflow:hidden`, which an inline element ignores — so a long title pushed the new controls off a narrow screen instead of ellipsing. Pre-existing, invisible until there was something on the right to push |
+| **The label moved to the second line, beside the account** | At 375px the row has ~295px, two buttons take ~121px of it, and "Thu 27 Aug, 7:00 AM" on the right would have left the title almost nothing. Measured in the browser at 375px: no overflow, `scrollWidth` 375 |
+
+**Found in passing and NOT fixed: a rescheduled meeting never updates.** The migration comment
+at `20260818090000_ingest.sql:107` says a calendar event that moves "is updated rather than
+duplicated". It is not: the same `alreadySeen` short-circuit at `run.ts:195` means a new
+`due_at` is never written back. Real, out of scope here, and worth knowing before trusting a
+time on the strip.
+
+**Tested end to end against the real database** under `qa-nextsteps@bealesllc.com` (admin,
+rates), now **deactivated, do not delete** — with twelve disposable `next_steps` of its own,
+so none of Ryan's rows were touched.
+
+- *Still open · 2 from before today* rendered above everything, most recent first, and
+  **Coming up was correctly suppressed** even though the QA login had a row a week out.
+- Done left the row in place reading *"Marked done · Undo"*; `/admin/history` showed
+  *"Status Open → Done · Completed — → Aug 21, 2026, 4:56 PM"* **changed by QA Next Steps**,
+  which is the whole point — the three stale rows say "changed by —".
+- Undo reopened it and cleared `completed_at`, proved in the database both ways.
+- With nine overdue the aside read *"Showing 5 of 9"*; closing all five left five Undos and
+  the line *"4 more still open. Show the next 4"*, which loaded them and re-read
+  *"4 from before today"*.
+- With a row due later today, **Today rendered BELOW Still open** rather than replacing it.
+- At 375px both buttons fit, the title ellipses, `document.body.scrollWidth` is 375.
+- The QA login could not close one of Ryan's rows: **0 rows affected, status unchanged**.
+- With every QA row deleted the strip **disappears entirely** rather than sitting empty.
+
+**Counts before and after are identical: accounts 23, contacts 100, live buildings 53,
+activities 843, sites 51, deals 55, `ingested_items` 292 (181 linked / 14 needs review / 97
+ignored), `ingest_runs` 14, `import_batches` 13, and MRR $46,086.33.** `next_steps` is back to
+**5 — 2 open, 3 dismissed**, the same five ids with the same statuses. `audit_log` 2142 →
+2179; **everything the QA login ever wrote is 34 rows, all on `next_steps`**, being its own 12
+inserts, 10 status changes and 12 deletes, and nothing outside that table.
+
+`db:verify` **223 → 227** — no migration, four behavioural checks: a member can mark their own
+next step done, closing one records **who** closed it, undo clears the completion date, and
+any member can close another member's (so the owner check is the app's job). `typecheck`,
+`lint` and a cold `rm -rf .next && npm run build` all pass.
+
+**The 14 `needs_review` items are all one collision: `90 Libbey`.** Eleven are Wound Center
+inspections, three are Fox Rock conversations (Kristen Riordan, day porter hours), and one
+names both 97 and 90. This is the documented consequence of the landlord/tenant split — Fox
+Rock's `90 Libbey` and South Shore Health's `Wound Center (90 Libbey Pkwy)` both claim the
+bare street phrase, so the matcher correctly refuses. A single `90 libbey` alias resolves all
+fourteen and **misfiles the three Fox Rock ones**; that trade is Ryan's to make, not a
+session's.
+
 ### What changed on 2026-08-21: a next step is visible before the day it happens
 
 **`fetchUpcomingNextSteps()` was written, exported and called from NOWHERE.** Its own
@@ -797,11 +872,12 @@ live buildings without one**, so the site backfill has run; **134 `match_aliases
 `ingested_items`**, so the alias curation and the Granola backfill have both run over the whole
 corpus. Ryan confirms the four Vercel environment variables are set.
 
-0. **The browser pass on the 2026-08-21 work.** It was built in a cloud container with no
-   database access, so the self-tests, a cold build and a hand-rendered component are all
-   that stand behind it. Check `/admin/ingest` shows three runs with *"Earlier runs (7)"*,
-   and that a Granola note ingested after the change reads as a collapsed excerpt on
-   `/activity` that opens to the whole summary with its line breaks intact.
+0. **The browser pass on the Granola-whole-note work.** It was built in a cloud container
+   with no database access, so the self-tests, a cold build and a hand-rendered component are
+   all that stand behind it. `/admin/ingest` **was** confirmed on 2026-08-21 to show three
+   runs with *"Earlier runs (7)"*; what is still unchecked is that a Granola note ingested
+   after the change reads as a collapsed excerpt on `/activity` that opens to the whole
+   summary with its line breaks intact.
 1. **Map a domain that appears on real meetings**, and the calendar starts paying for itself:
    `bidplymouth.org`, `bbmfacility.com`, `bostonbuildingmaintenance.com`. Also worth deciding
    whether **BBM Facility Services** should be an account at all — Brittany Hampton is its CEO and
@@ -979,8 +1055,8 @@ Phase 7c added:
 | `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
 | `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
-`db:verify` grew from 118 to **157 checks**, and is **223** today — unchanged by the
-2026-08-21 work, which needed no migration.
+`db:verify` grew from 118 to **157 checks**, and is **227** today. The last four arrived
+with no migration at all: closing a next step is behaviour, not schema.
 
 ### Tested end to end, 2026-08-17
 
@@ -1444,7 +1520,7 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **223 checks** |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **227 checks** |
 | `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **41** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse and the shared-mailbox display names |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | **30** checks: the hazard cases for what a title MATCHES, plus what a matched note BECOMES — the per-source body limit, the whitespace rules and the timeline's excerpt threshold. No network, no database, no credentials — runs anywhere |
@@ -1727,14 +1803,29 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [ ] Whether the other four should be added to the ingest group, and whether they know their client mail would be logged. Ryan chose to start with his mailbox alone; widening it is a group membership change and no code.
 
 **Opened 2026-08-21:**
-- [ ] **There is NO way to complete or dismiss a next step in the app.** `next_steps` has a
-      `status` enum of `open` / `done` / `dismissed`, a `completed_at` column and an `activity_id`
-      column for what the meeting became — and nothing anywhere writes any of them. The three
-      stale `46 Obery St` rows had to be dismissed from the Supabase SQL editor, which is why
-      their `audit_log.changed_by` is null. The table is `member_rw`, so this needs no migration
-      and no new policy.
-- [ ] **14 `ingested_items` are `needs_review`** — Granola titles naming two records, waiting on
-      one alias each. `/admin/ingest` lists them; 134 aliases exist already.
+- [x] ~~**There is NO way to complete or dismiss a next step in the app.**~~ — **done
+      2026-08-21.** Done and Dismiss on every row of the dashboard strip, with an Undo, plus a
+      *Still open* section so a meeting nobody closed stops vanishing the next morning. No
+      migration, as predicted. **`activity_id` is still written by nothing, deliberately** —
+      see the decision log: the honest way to fill it is a join at ingest time on
+      `(source, external_id)`, never a picker.
+- [ ] **A next step with no `due_at` is invisible to all three queries.** `due_at` is nullable
+      and `.lt()` / `.gte()` both drop nulls. Zero such rows exist — only the calendar path
+      inserts, and a calendar event always has a start — but **7d's written commitments are
+      exactly the case that would create them**. `whenLabel()` already has a `'no date'`
+      branch, so the original author saw it coming. Decide where an undated commitment belongs
+      before 7d writes one, rather than bolting an `.or()` onto a query that is currently a
+      clean index scan.
+- [ ] **A rescheduled meeting never updates its `due_at`.** `20260818090000_ingest.sql:107`
+      claims a moved calendar event "is updated rather than duplicated"; the `alreadySeen`
+      short-circuit at `run.ts:195` means it is not. Either fix the behaviour or fix the
+      comment — a comment that states a rule this repo does not follow is worse than neither.
+- [ ] **14 `ingested_items` are `needs_review`, and they are all the same collision: `90
+      Libbey`.** Read 2026-08-21: eleven are Wound Center inspections, three are Fox Rock
+      conversations with Kristen Riordan about day porter hours, one names both 97 and 90.
+      Fox Rock's `90 Libbey` and South Shore Health's `Wound Center (90 Libbey Pkwy)` both
+      claim the bare street phrase, so refusing is correct. One `90 libbey` alias clears all
+      fourteen **and misfiles the three Fox Rock ones** — Ryan's trade to make.
 
 **Opened or closed by Phase 7c:**
 - [x] ~~Alias `ryanbeale26@gmail.com` to Ryan's profile~~ — done, through `profile_email_aliases`.
@@ -1881,6 +1972,11 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-21 | `EXCERPT_LENGTH` is its own number and is deliberately not `SNIPPET_LENGTH` | One is about what gets stored and why; the other is about how much vertical space a row of a 200-row feed may take. Tying them would let a storage decision silently relay out every screen. The same reasoning says that if the feed ever gets too heavy the fix is a lower **row** limit — never a `substring()` in the query, which would be a second truncation number destined to disagree with the first |
 | 2026-08-21 | **Three runs on the Ingest screen, but still ten fetched** | The panel listed everything it fetched and pushed the sources and the domain map off the screen. What is *rendered* was always independent of the 26-hour staleness rule — that is computed from `runs[0]` inside `fetchRunHealth` before anything renders — so the fetch was left alone rather than lowered, which keeps the two facts from ever needing to agree. The disclosure says how many are **hidden**, not how many exist: `ingest_runs` has no delete policy and ten is only this panel's window |
 | 2026-08-21 | A display name loses the site or delegate a shared mailbox carries | Exchange writes *"Eley, Thelma @ Charlotte"* and *"Nick Deletsky / Anthony"*, and both reached `/review` as contact suggestions with the suffix welded into a first name. The spaces around the separator are required, which is the whole safety of the rule — a hyphenated surname and an address that arrived by accident are untouched. It can still keep the wrong half if a mailbox is ever written the other way round, and that is accepted rather than solved: it is a name on a suggestion somebody reads and can edit before accepting, so the cost is a correction, not a bad row |
+| 2026-08-21 | **Done writes `status` and `completed_at`, and deliberately leaves `activity_id` null** | The column exists for "what this meeting became", and the tempting version offers a picker of recent activities. It would be empty most times anybody opened it: the activity usually does not exist yet at the moment you mark a meeting done — the Granola note lands that night, the email later — and people learn very fast to stop opening a thing that is empty. The honest way to fill it is a **join at ingest time** on `(source, external_id)`, which the next step and the activity already share from the same calendar event: a lookup, not a judgement. A half-filled column is worse than an empty one |
+| 2026-08-21 | **Overdue is its own always-on section, not folded into Today and not gated on Today** | Three different jobs: overdue is a demand, Today is a briefing, Coming up is a preview. Widening the Today window backwards would make a two-week-old meeting read as though it were on today, which is a lie the strip did not previously tell. And gating it on Today being empty would hide it on the day you have five meetings, which is precisely the day yesterday's slips. It is safe to show always because it **drains** — closing what is on screen brings the next five within reach — which is also why no `/next-steps` page was built |
+| 2026-08-21 | **A closed row stays in place with an Undo, so `setNextStepStatus` is the one action in the app with no `revalidatePath`** | Revalidating re-renders the dashboard and drops the row the instant it is closed, taking the Undo with it — and an unrecoverable Dismiss is the exact problem this work exists to remove, since the only way back would be the SQL editor that left `changed_by` null in the first place. It is safe only because **one file reads `next_steps` and one page renders it**; the reason is written into the action, because a missing `revalidatePath` otherwise reads as an omission |
+| 2026-08-21 | **The owner filter on the update is app policy, not a security boundary, and `db:verify` says so out loud** | `next_steps` is `member_rw`: any member may close any next step, and a check now asserts that rather than leaving it to be discovered. The app narrows it to your own because closing somebody else's work silently is rude. It comes with `.select('id')` and an explicit refusal — without that, a row that is not yours updates zero rows and PostgREST reports success, so the screen would say "Marked done" over a write that never happened, which is the class of quiet lie this app refuses everywhere else |
+| 2026-08-21 | **Dismissing an occurrence means "not this week", not "never again"** | `collapseRecurringSeries` keeps the earliest occurrence still ahead, so a dismissal holds for as long as that occurrence is in the future and nothing slides in behind it; once its start passes, the next one arrives as a new next step with its own `external_id`. Correct, and not obvious — a person may well expect the following week's to appear at once. Recorded rather than changed, because the alternative is a "dismiss the whole series" concept that nobody has asked for |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
