@@ -229,6 +229,73 @@ works before more data arrived. Phase 6 and InspectQA follow.
 **Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
 **Last session:** 2026-08-21.
 
+### What changed on 2026-08-21: four next steps from one weekly meeting — and why
+
+**The bug was a DEPLOY GAP, not a matcher fault. Read this before touching `graph.ts`.**
+
+The 07:51 UTC production run wrote **four** next steps from `46 Obery St Cleaning
+Inspection`, one weekly series — 27 Aug, 3 Sep, 10 Sep and 17 Sep, all within 300ms. The
+obvious suspect was Graph declining to return `seriesMasterId`, which would send every
+occurrence through the `if (!series)` guard in `collapseRecurringSeries()`. It is not that,
+and chasing it would have cost a second session.
+
+`collapseRecurringSeries()` **was not running, because the commit holding it was not
+deployed.** It landed locally on 2026-08-20 at 20:05 EDT (`40c41ab`); `origin/main` did not
+move until 2026-08-21 at **14:33 EDT**. The run fired at 07:51 UTC — 03:51 EDT — roughly ten
+and a half hours earlier, against `659bc91`, in which `git show 659bc91:src/lib/ingest/graph.ts`
+finds neither `collapseRecurringSeries` nor `seriesMasterId`. This file's own "Still to do"
+list had item 0 as *"Push. The 2026-08-20 hardening is committed and not yet pushed."*
+
+`659bc91` **did** already carry the `/originalStart` suffix, which is why the four
+occurrences got four distinct `external_id`s and four rows instead of colliding into one.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **`seriesMasterId` IS returned on a `calendarView` row** | Measured, not assumed. `npm run graph:probe` reads the live tenant as **70 events — 53 occurrences across 11 recurring series, 17 one-offs; 39 still ahead; 14 after collapsing.** It could not count 11 series without the field. 39 → 14 is exactly 11 series contributing their earliest plus 3 future one-offs, so **the collapse is now proved against real data**, which no session had managed before |
+| **The sampled events all print `seriesMasterId: null`, and that is not a contradiction** | `calendarView` returns start order, and the first few in this window happen to be one-offs (`type` is 14 characters — `singleInstance`). It is the same sampling trap that made the `$top=5` probe wrong on 2026-08-20. **Read the counts the probe prints, never the sample** |
+| **Nothing in the app could answer "is my fix live?", so now it does** | The Sources panel on `/admin/ingest` already reports what this deployment's environment holds; it now names the commit too, from `deployedCommit()` in `src/lib/env.ts`. `VERCEL_GIT_COMMIT_SHA` and `VERCEL_GIT_COMMIT_MESSAGE` are plain server variables set on every deployment, the same mechanism `siteUrl()` leans on. Locally it says so rather than leaving a gap |
+| **The three stale rows were DISMISSED, not deleted** | Soft-delete is the standing rule, every reader filters `status = 'open'`, and the audit trigger on `next_steps` records it. Their `ingested_items` rows were deliberately **left alone**: they are a true record of what Graph returned, and the collapse means those occurrences are not fetched again until each becomes the earliest one ahead |
+| **`audit_log.changed_by` is null on those three** | They were dismissed from the Supabase SQL editor, which has no `auth.uid()`. There is no UI for dismissing a next step, and building one for a three-row one-off correction was not worth it. It shows as "changed by —" on `/admin/history` |
+
+**The lesson worth keeping: a commit that is merely committed is a commit that is not
+running.** Vercel builds from `main`, so pushing *is* the deployment — and until this
+session there was no way to tell the two apart from inside the app.
+
+**Tested end to end against the real database, 2026-08-21**, under `qa-deploy@bealesllc.com`
+(admin, rates), now **deactivated, do not delete**. The nightly job was run by hand twice,
+which is the established pattern and writes real rows — a nightly run passes no
+`import_batch_id`, so there is no Undo button for it.
+
+- **The proof the collapse works, which no session had before: `nextStepsCreated: 0`.**
+  84 seen, 5 ingested, 24 already known. The 27 Aug occurrence was already in the mirror
+  pointing at a live row, so it reported as already-seen; 3, 10 and 17 Sep were collapsed
+  out before they were ever mapped, so they were never touched.
+- A second identical run created **nothing** — 84 seen, 0 new, 29 already known.
+- `/admin/ingest` shows three runs with **"Earlier runs (7)"** collapsed, and the run of
+  12 hours earlier reads *"124 seen · 9 new · 28 already known · 5 activities · **4 next
+  steps** · 1 suggestion"*, which is the bug itself, on the screen.
+- The Sources line reads *"Running locally, so there is no deployed commit to name."*
+- The mailbox list read **six** addresses while the QA login was active — which is the
+  panel doing its job, and why it names them rather than counting them. Five again after.
+- `/activity` renders the *Show all* disclosure on 50 rows, all collapsed, each excerpt
+  ending in an ellipsis, and clicking one opens it. Expect most existing Granola bodies to
+  have one: 122 of 138 sit at exactly the old 500-character cap, which is over the
+  threshold. Not a bug.
+
+**Counts before and after: accounts 23 → 23, contacts 99 → 99, live buildings 53 → 53,
+`next_steps` 5 → 5, and MRR $46,086.33 → $46,086.33.** Activities 838 → **843** and
+`ingested_items` 287 → 292 — five real new emails and notes, which is the feature working
+rather than test residue. `ingest_runs` 12 → 14, the two hand-runs.
+
+`db:verify` **223/223, unchanged — there is no migration in this work.** `graph:probe
+--selftest` **41/41**, `typecheck`, `lint` and a cold `rm -rf .next && npm run build` all
+pass.
+
+**One thing the browser pass could NOT check: the dashboard.** `fetchTodaysMeetings()` and
+`fetchUpcomingNextSteps()` both filter `owner_id = <you>`, and the four Obery rows are
+Ryan's, so a QA login sees none of them. **Ryan verifies "one 46 Obery St row, not four" on
+his own dashboard after running the dismissal.**
+
 ### What changed on 2026-08-21: a Granola note is now kept whole
 
 **Read this first if you are a later session: nothing here needed a migration**, so
@@ -299,7 +366,7 @@ Chasing the two things 7b had never proved turned up one bug worth more than eit
 
 | Thing | Why it is the way it is |
 |---|---|
-| **A contact with no account used to match NOTHING, and most of the book has no account** | `matchParticipants` matched contacts by address, reduced them to the set of their non-null `account_id`s, and returned a match only when that set held exactly one. An accountless contact contributes nothing to that set, so it counted for nothing — and **63 of the 99 live contacts have no account, 47 of them with an address**. It was doing it in production every night: `meghan.szafran@cancer.org`, a contact since the August import, was sitting on `/review` in the "people writing in from somewhere we don't know" list. A sole accountless contact is now an `exact` match with a **null account**, which is honest rather than invented, and `set_activity_account()` fills it the day she gains one |
+| **A contact with no account used to match NOTHING, and most of the book has no account** | `matchParticipants` matched contacts by address, reduced them to the set of their non-null `account_id`s, and returned a match only when that set held exactly one. An accountless contact contributes nothing to that set, so it counted for nothing — and **63 of the 99 live contacts have no account, 47 of them with an address**. It was doing it in production every night: `meghan.szafran@cancer.org`, a contact since the August import, was sitting on `/review` in the "people writing in from somewhere we don't know" list. A sole accountless contact is now an `exact` match with a **null account**, which is honest rather than invented. **It does NOT backfill:** `set_activity_account()` is a BEFORE trigger on `activities`, so giving her a contact record an account fills the account in on her *next* activity and leaves the ones already written alone (corrected 2026-08-21 — this line used to say "fills it the day she gains one", which is wrong) |
 | **…and the domain tier now carries the contact too** | It hardcoded `contactId: null`, so a known person at a mapped domain was linked to the company and then thrown away. The account still wins — an account is worth more than a person — but both are kept |
 | **TWO accountless contacts is still nothing** | Deliberate, and it bites immediately: `jfallon@` and `lwebber2@bwh.harvard.edu` are both accountless contacts, so a message naming both refuses while a message naming one links. The fix is data — map `bwh.harvard.edu`, or give either of them an account — not code |
 | **Recurring meetings are the NORM, and this file said they did not exist** | It recorded that every event in the tenant was a `singleInstance` and that the occurrence path had never met real data. That came from a probe capped at **`$top=5`**, and `calendarView` returns events in start order, so the sample was five one-offs. The real window holds **40 occurrences across 11 series** against 8 single instances |
@@ -1622,7 +1689,7 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~Does the Granola note↔calendar join work?~~ — **no, and it does not need to.** Measured 2026-08-19: 1 of 17 notes carries a calendar event, and it matches no Outlook meeting. Not built; the risk is written down instead.
 - [x] ~~3–4 real samples~~ — taken 2026-08-19 with `npm run graph:probe`, and they changed three things. The parser was written from them, not from the docs.
 - [x] ~~**No calendar event has become a `next_step` yet.**~~ — **done 2026-08-20.** *Monthly BI Inspection*, due 19 Sep, owner Ryan, contact Brittany Hampton, no account. It could not happen before because both contacts on that meeting were accountless, which the matcher treated as nobody.
-- [x] ~~**The recurring-meeting rule has never met real data.**~~ — **it has now, and the assumption behind it was wrong.** 40 occurrences across 11 series in one nightly window. `originalStart` is populated; each occurrence carries its own `iCalUId`; `seriesMasterId` is what groups them. One next step per series, rolling forward.
+- [x] ~~**The recurring-meeting rule has never met real data.**~~ — **it has now, and the assumption behind it was wrong.** 40 occurrences across 11 series in one nightly window. `originalStart` is populated; each occurrence carries its own `iCalUId`; `seriesMasterId` is what groups them. One next step per series, rolling forward. **And it is now proved on real data, which it was not when this line was first ticked** — the probe reads 70 events, 53 occurrences across 11 series, 39 ahead, **14 after collapsing**, which is 11 series plus 3 future one-offs. The four-next-steps incident of 2026-08-21 was the code not being deployed, not the rule being wrong.
 - [ ] **No calendar event has matched on the DOMAIN tier.** The one that worked matched a contact. `bidplymouth.org`, `bbmfacility.com` and `bostonbuildingmaintenance.com` all appear on real meetings and are unmapped — mapping any of them is the cheapest way to test it.
 - [ ] **10 of the 11 recurring series match nothing** and leave no trace at all, because Ryan organises them and `recordUnknownSender` skips a colleague. That is correct, and it does mean the calendar is quieter in the app than it looks in Outlook.
 - [ ] The Vercel environment variables. (The `maxDuration` question is settled: 300, the Hobby ceiling.)
