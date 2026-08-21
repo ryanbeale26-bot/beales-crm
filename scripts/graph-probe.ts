@@ -26,6 +26,7 @@
 
 import { collapseRecurringSeries, graphTime } from '@/lib/ingest/graph'
 import { matchParticipants, type Directory } from '@/lib/ingest/match'
+import { splitName } from '@/lib/ingest/addresses'
 import type { Participant } from '@/lib/ingest'
 import { fetchMailboxes } from '@/lib/ingest/mailboxes'
 
@@ -277,6 +278,7 @@ function selftest(): number {
 
   matchingChecks(check)
   recurrenceChecks(check)
+  displayNameChecks(check)
 
   console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${total - failures}/${total} checks\n`)
   return failures
@@ -327,6 +329,58 @@ const people = (...addresses: string[]): Participant[] =>
  * to the strangers tray. 63 of 99 live contacts are accountless, and it was
  * doing this to a real contact in production every night.
  */
+/**
+ * Display names as Exchange really writes them.
+ *
+ * Both odd ones here are real, off the nightly ingest: a shared mailbox and a
+ * delegated one, each of which produced a contact suggestion with the site or
+ * the delegate stuck onto somebody's first name.
+ */
+function displayNameChecks(check: Check): void {
+  const eley = splitName('Eley, Thelma @ Charlotte')
+  check(
+    'a shared mailbox loses its site, not its surname',
+    eley.firstName === 'Thelma' && eley.lastName === 'Eley',
+    `${eley.firstName} / ${eley.lastName}`,
+  )
+
+  const nick = splitName('Nick Deletsky / Anthony')
+  check(
+    'a delegated mailbox loses the delegate',
+    nick.firstName === 'Nick' && nick.lastName === 'Deletsky',
+    `${nick.firstName} / ${nick.lastName}`,
+  )
+
+  // The ordinary shapes, unchanged. These are the ones the guard must not touch.
+  const listed = splitName('Smith, Jane')
+  check(
+    'an address list entry still reads first name last',
+    listed.firstName === 'Jane' && listed.lastName === 'Smith',
+    `${listed.firstName} / ${listed.lastName}`,
+  )
+
+  const plain = splitName('Jane Smith')
+  check(
+    'a plain name is untouched',
+    plain.firstName === 'Jane' && plain.lastName === 'Smith',
+    `${plain.firstName} / ${plain.lastName}`,
+  )
+
+  const hyphen = splitName("Mary O'Brien-Smith")
+  check(
+    'a hyphenated surname is not a separator',
+    hyphen.firstName === 'Mary' && hyphen.lastName === "O'Brien-Smith",
+    `${hyphen.firstName} / ${hyphen.lastName}`,
+  )
+
+  const one = splitName('Gloria')
+  check(
+    'a single word is still a first name with no surname',
+    one.firstName === 'Gloria' && one.lastName === '',
+    `${one.firstName} / ${one.lastName}`,
+  )
+}
+
 function matchingChecks(check: Check): void {
   console.log('\n  the confidence tiers')
 

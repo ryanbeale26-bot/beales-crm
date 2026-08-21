@@ -147,6 +147,32 @@ export function usableDisplayName(name: string | null, address: string): string 
 }
 
 /**
+ * Drop the trailing site or delegate a shared mailbox carries on its name.
+ *
+ * Exchange writes a shared or delegated mailbox as the person plus a suffix,
+ * and both real examples came through the nightly ingest as contact
+ * suggestions: "Eley, Thelma @ Charlotte" split on the comma and produced a
+ * FIRST NAME of "Thelma @ Charlotte", and "Nick Deletsky / Anthony" has no
+ * comma at all, so the last word won and it came out first "Nick Deletsky /",
+ * last "Anthony". In both the person is the part before the separator.
+ *
+ * The spaces around the separator are required, and that is the whole safety
+ * of it: "O'Brien-Smith" and "jane/admin@example.com" are untouched, so only
+ * something already formatted as "name SEPARATOR something" is trimmed.
+ *
+ * It can still keep the wrong half if a mailbox is ever written the other way
+ * round — "Reception / Jane Smith" would come out as Reception. That is a name
+ * on a suggestion somebody reads and can edit before accepting, so the cost is
+ * a correction rather than a bad row, and it is the rarer shape of the two.
+ */
+function withoutMailboxSuffix(name: string): string {
+  const cut = name.replace(/\s+[@/]\s+.*$/, '').trim()
+  // Never hand back nothing: a name that is ONLY a suffix is not one this rule
+  // understands, so it is left exactly as it arrived.
+  return cut === '' ? name : cut
+}
+
+/**
  * Split a display name into first and last, the way `contacts` stores it.
  *
  * Handles "Smith, Jane" as well as "Jane Smith", because Outlook global address
@@ -155,7 +181,7 @@ export function usableDisplayName(name: string | null, address: string): string 
  * only requires one of the two to be non-empty.
  */
 export function splitName(full: string): { firstName: string; lastName: string } {
-  const trimmed = full.trim().replace(/\s+/g, ' ')
+  const trimmed = withoutMailboxSuffix(full.trim().replace(/\s+/g, ' '))
 
   if (trimmed.includes(',')) {
     const [last, first] = trimmed.split(',', 2).map((part) => part.trim())
