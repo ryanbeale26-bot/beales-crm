@@ -176,3 +176,84 @@ export function toBody(source: IngestSource, text: string | null): string | null
   const limit = BODY_LIMIT[source]
   return limit === null ? tidy : cap(tidy, limit)
 }
+
+/**
+ * The title a calendar item becomes.
+ *
+ * One expression, used by the INSERT in run.ts and by `nextStepPatch` below, so
+ * the two cannot come to disagree about what an untitled meeting is called —
+ * and so neither can ever produce `''`, which `next_steps.title` has a check
+ * constraint against.
+ */
+export function nextStepTitle(item: RawItem): string {
+  return item.subject || 'Meeting'
+}
+
+/** Just enough of a `next_steps` row to decide whether it still matches its
+ *  calendar event. Read through the mirror's embed in run.ts. */
+export type ScheduledNextStep = {
+  status: string
+  title: string
+  due_at: string | null
+  all_day: boolean
+}
+
+export type NextStepPatch = { title?: string; due_at?: string; all_day?: boolean }
+
+/**
+ * What a moved or renamed calendar event should change on its next step. Null
+ * means there is nothing to do.
+ *
+ * `20260818090000_ingest.sql` always claimed a moved event "is updated rather
+ * than duplicated". The unique key stopped the duplication; nothing performed
+ * the update, so a meeting dragged from Tuesday to Thursday read as Tuesday for
+ * ever and then sat in "Still open" as though it had been missed.
+ *
+ * Three rules, and each is load-bearing:
+ *
+ *   - **Only an OPEN row is touched.** Closing one was a decision, and a nightly
+ *     job that quietly reopens it is how somebody stops trusting the strip. It
+ *     also protects `collapseRecurringSeries`: a dismissal is *meant* to hold
+ *     for as long as that occurrence is the earliest one still ahead, so
+ *     reviving it on a move would undo the documented "not this week" behaviour.
+ *
+ *   - **`due_at` is compared as an INSTANT, never as a string.** This is the
+ *     line the whole feature turns on. Postgres hands back
+ *     `2026-08-27T14:00:00+00:00`; the item carries `2026-08-27T14:00:00.000Z`.
+ *     They are the same moment and different text, so a string comparison would
+ *     report a change every single night — an audit row per meeting per run, and
+ *     a "rescheduled" count that means nothing.
+ *
+ *   - **`detail` is deliberately absent.** Nothing in the app renders it, so
+ *     keeping it current would be audit-log noise and nothing else. `title`,
+ *     `due_at` and `all_day` are exactly what the dashboard strip draws.
+ *
+ * Pure on purpose: no database, no clock, no network. That is what lets
+ * `graph:probe --selftest` pin every one of these rules on a machine with no
+ * credentials at all.
+ */
+export function nextStepPatch(current: ScheduledNextStep, item: RawItem): NextStepPatch | null {
+  // Mail and Granola never carry a schedule and never reach this.
+  if (!item.scheduled) return null
+  if (current.status !== 'open') return null
+
+  const patch: NextStepPatch = {}
+
+  const title = nextStepTitle(item)
+  if (current.title !== title) patch.title = title
+
+  if (!sameInstant(current.due_at, item.scheduled.startsAt)) patch.due_at = item.scheduled.startsAt
+  if (current.all_day !== item.scheduled.allDay) patch.all_day = item.scheduled.allDay
+
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
+/** Same moment, however it happens to be written. A null due_at — which no
+ *  calendar row should ever have, but the column allows — counts as different,
+ *  so the move is written rather than skipped. */
+function sameInstant(a: string | null, b: string): boolean {
+  if (a === null) return false
+  const left = new Date(a).getTime()
+  const right = new Date(b).getTime()
+  return Number.isFinite(left) && Number.isFinite(right) && left === right
+}

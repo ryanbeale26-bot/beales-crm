@@ -75,6 +75,10 @@ function RunLine({ run }: { run: RunRow }) {
         {run.seen} seen · {run.ingested} new · {run.alreadySeen} already known ·{' '}
         {run.activitiesCreated} activities · {run.nextStepsCreated} next steps ·{' '}
         {run.suggestionsWritten} suggestions
+        {/* Only when it happened. The line already carries five numbers, and a
+            sixth reading 0 on almost every run is the dead number this app
+            argues against everywhere else. */}
+        {run.nextStepsUpdated > 0 && ` · ${run.nextStepsUpdated} rescheduled`}
         {run.stoppedEarly && ' · stopped at the deadline'}
         {run.truncated.length > 0 && ` · ${run.truncated.join(', ')} read only part`}
       </div>

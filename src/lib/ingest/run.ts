@@ -12,7 +12,16 @@ import {
 } from '@/lib/ingest/match'
 import { activityTypeForTitle } from '@/lib/ingest/titles'
 import { propose, type Proposal } from '@/lib/ingest/suggestions'
-import { toBody, toSnippet, type RawItem, type SourceFetch, type Supabase } from '@/lib/ingest'
+import {
+  nextStepPatch,
+  nextStepTitle,
+  toBody,
+  toSnippet,
+  type RawItem,
+  type ScheduledNextStep,
+  type SourceFetch,
+  type Supabase,
+} from '@/lib/ingest'
 
 /**
  * The nightly run: fetch, match, write.
@@ -36,6 +45,9 @@ export type RunSummary = {
   unmatched: number
   activitiesCreated: number
   nextStepsCreated: number
+  /** Open next steps whose calendar event had MOVED or been renamed since we
+   *  last saw it. Rows changed, not rows checked. */
+  nextStepsUpdated: number
   suggestionsWritten: number
   alreadySeen: number
   errors: string[]
@@ -54,6 +66,7 @@ const EMPTY: RunSummary = {
   unmatched: 0,
   activitiesCreated: 0,
   nextStepsCreated: 0,
+  nextStepsUpdated: 0,
   suggestionsWritten: 0,
   alreadySeen: 0,
   errors: [],
@@ -64,6 +77,17 @@ const EMPTY: RunSummary = {
 /** How long a suggestion waits before it stops asking. Ignoring the review
  *  screen has to cost nothing, or it becomes the chore that kills adoption. */
 const SUGGESTION_TTL_DAYS = 21
+
+/**
+ * What the mirror lookup reads, including the next step it is standing in for.
+ *
+ * A single string literal, and it has to stay one: supabase-js parses this at
+ * the TYPE level to work out the row shape, so a concatenation widens every
+ * column to `string` and the query stops compiling in ways that read as though
+ * the columns do not exist.
+ */
+const MIRROR_COLUMNS =
+  'id, status, activity_id, next_step_id, next_steps ( status, title, due_at, all_day )'
 
 export async function runIngest(
   supabase: Supabase,
@@ -168,9 +192,15 @@ async function ingestOne(
   // The unique key is (source, external_id, mailbox_id) with NULLS NOT
   // DISTINCT, so the lookup has to distinguish "no mailbox" from "this
   // mailbox" the same way — `.eq(col, null)` would silently match nothing.
+  //
+  // The embedded next step is what lets a moved meeting be reconciled below
+  // without a second round trip. It costs nothing on the paths that will never
+  // use it: mail and Granola carry no next_step_id, so the embed comes back
+  // null. (One long literal on purpose — supabase-js infers the row type from
+  // the select STRING, and a concatenation widens the whole thing to `string`.)
   const lookup = supabase
     .from('ingested_items')
-    .select('id, status, activity_id, next_step_id')
+    .select(MIRROR_COLUMNS)
     .eq('source', item.source)
     .eq('external_id', item.externalId)
   const { data: existing } = await (
@@ -193,9 +223,39 @@ async function ingestOne(
   // ever and the backfill could never be re-run after an undo — which would make
   // the undo a one-way door, which is the opposite of what an undo is for.
   if (existing && existing.status === 'linked' && (existing.activity_id || existing.next_step_id)) {
+    // ...but "an item becomes a record once" is not the same as "a record is
+    // never wrong again". A calendar event that MOVES keeps its external_id —
+    // graph.ts suffixes the ORIGINAL start, not the current one — so it arrives
+    // here, matches, and until now was answered with a timestamp touch and
+    // nothing else. The migration comment on next_steps has always said a moved
+    // event "is updated rather than duplicated"; the unique key stopped the
+    // duplication and nothing did the update.
+    //
+    // Deliberately NOT re-matched. If the attendees changed, the account and
+    // contact links stay exactly as they were: a meeting silently moving to a
+    // different account overnight is a suggestion-shaped problem, not an update.
+    const current = existing.next_steps as ScheduledNextStep | null
+    const patch = current ? nextStepPatch(current, item) : null
+
+    if (patch && existing.next_step_id) {
+      const { error } = await supabase
+        .from('next_steps')
+        .update(patch)
+        .eq('id', existing.next_step_id)
+      if (error) throw new Error(`next step: ${error.message}`)
+      summary.nextStepsUpdated += 1
+    }
+
     await supabase
       .from('ingested_items')
-      .update({ last_seen_at: new Date().toISOString() })
+      .update({
+        last_seen_at: new Date().toISOString(),
+        // Only when something actually moved, so an ordinary re-sighting stays
+        // the single-column write it has always been. The mirror must not go on
+        // saying Tuesday while the strip says Thursday — /review and
+        // /admin/ingest read these rows.
+        ...(patch ? { occurred_at: item.occurredAt, subject: item.subject } : {}),
+      })
       .eq('id', existing.id)
     summary.alreadySeen += 1
     return
@@ -293,7 +353,7 @@ async function ingestOne(
     const { data, error } = await supabase
       .from('next_steps')
       .insert({
-        title: item.subject || 'Meeting',
+        title: nextStepTitle(item),
         // A snippet, not a body, and that is a decision rather than an
         // oversight: a next step is graph-only in practice (a Granola note is
         // never future-dated), so this text is `bodyPreview` and already under
