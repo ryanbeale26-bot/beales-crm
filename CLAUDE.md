@@ -227,7 +227,73 @@ works before more data arrived. Phase 6 and InspectQA follow.
 ## Current status
 
 **Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
-**Last session:** 2026-08-21.
+**Last session:** 2026-08-22.
+
+### What changed on 2026-08-22: a rescheduled meeting stops lying
+
+**The migration comment was right and the code was not.** `20260818090000_ingest.sql:107`
+has always said a calendar event that moves "is updated rather than duplicated". The
+`unique (source, external_id)` it describes did stop the duplication. **Nothing anywhere
+performed the update** — so a meeting dragged from Tuesday to Thursday in Outlook read as
+Tuesday for ever, and once Tuesday passed it dropped into *Still open* as though somebody
+had missed it. Survivable while next steps were invisible; not survivable now they are the
+first panel on the first screen anybody opens.
+
+**The comment is now TRUE, so the migration file was deliberately not edited.**
+
+| Thing | Why it is the way it is |
+|---|---|
+| **The already-seen short-circuit's CONDITION is untouched** | `run.ts:195` keys on `status === 'linked' && (activity_id \|\| next_step_id)`, and that keying is load-bearing for something else entirely — it is what lets an unmatched Granola note be re-evaluated after an alias is added. The reconcile happens **inside** the branch, before it returns, so nothing about alias retro-linking changes |
+| **The identity key was already right and was NOT changed** | `graph.ts:277` suffixes `iCalUId` with **`originalStart`** — the original slot, not the moved one — so a rescheduled occurrence still matches its mirror row while the time underneath it changes. A one-off keeps its bare `iCalUId`, stable across a move too. Identity was never the problem; only the update path was missing |
+| **Only `status = 'open'` rows are touched. Ryan's call and the right one** | Closing one was a decision, and a nightly job that quietly reopens it is how somebody stops trusting the strip. There is a second reason that is easy to miss: `collapseRecurringSeries` keeps the earliest occurrence still ahead, so a dismissal is **meant** to hold while that occurrence is in the future. Reviving it on a move would undo the documented "dismiss means not this week" behaviour |
+| **`due_at`, `all_day` and `title` — exactly what the strip renders** | A rename to `CANCELLED - site walk` is worth seeing, and it is the **only** signal available for a cancellation the organiser renames rather than deletes. A slight rename simply reads correctly rather than staler. `detail` is deliberately left out: nothing in the app renders it, so keeping it current would be audit-log noise and nothing else |
+| **`due_at` is compared as an INSTANT, never as a string** | The line the whole feature turns on. Postgres hands back `2026-08-29T11:00:00+00:00`; the item carries `2026-08-29T11:00:00.000Z`. Same moment, different text — so a string comparison would report a change **every single night**, write an audit row per meeting per run, and make the new counter mean nothing. Proved against the real database: an identical second run reported `nextStepsUpdated=0` |
+| **It is deliberately NOT re-matched** | If the attendees changed, the account and contact links stay exactly as they were. A meeting silently moving to a different account overnight is a suggestion-shaped problem, not an update |
+| **`nextStepPatch()` is PURE, and lives in `src/lib/ingest/index.ts`** | No database, no clock, no network — which is what lets `graph:probe --selftest` pin all ten of its rules on a machine with no credentials at all. Beside `toSnippet`/`toBody`, where this repo already keeps its pure shaping rules |
+| **`nextStepTitle()` is shared by the insert and the patch** | The insert's fallback was `item.subject \|\| 'Meeting'` inline. Two copies would drift, and `next_steps.title` has `check (title <> '')`, so an untitled meeting patching to `''` would fail the write rather than fail quietly |
+| **The mirror lookup gained the next step by EMBED** | One round trip rather than two. It costs nothing on the paths that never use it: mail and Granola carry no `next_step_id`, so the embed comes back null. `MIRROR_COLUMNS` is one long string literal on purpose — supabase-js infers the row type from the select STRING, and a concatenation widens every column to `string` |
+| **`occurred_at` and `subject` on the mirror move too, but ONLY when something moved** | An ordinary re-sighting stays the single-column write it has always been. `/review` and `/admin/ingest` read these rows, and the mirror must not go on saying Tuesday while the strip says Thursday |
+| **One additive column, `ingest_runs.next_steps_updated`** | Instructed by that table's own comment: *"When that type gains a number, this table should gain a column."* It is what makes the fix **visible** — without it the only evidence a reschedule landed is the dashboard reading differently from how somebody remembers it yesterday. Rendered on `/admin/ingest` **only when above zero**, because a sixth number reading 0 on almost every run is the dead number this app refuses everywhere else |
+| **`/admin/history` needed no work at all** | `next_steps` was already on the audit renderer's allowlist with `title`, `due_at` and `all_day` labelled, so a reschedule renders as *"Due Aug 27 → Aug 29 · changed by Nightly ingest"* for free |
+
+**Also fixed: a broken *Coming up* rendered as an empty *Coming up*.** `fetchUpcomingNextSteps`
+destructured a bare `const { data }` while both siblings returned an error. It now matches
+them — **and the deeper half is that `today.error` and `overdue.error` were already returned
+and already rendered nowhere**, so all three sections failed silently. The first non-null of
+the three now reaches the strip, and the strip's `return null` no longer swallows an error
+when there is nothing else to show.
+
+**Tested end to end against the real database** under `qa-reschedule@bealesllc.com` (admin,
+rates), now **deactivated, do not delete** — with one disposable `next_steps` row and its
+own mirror row, so none of Ryan's rows were touched.
+
+- Moved two days **and** renamed → `nextStepsUpdated=1`; the row followed on both fields,
+  and so did the mirror's `subject` and `occurred_at`.
+- The identical run again → **`nextStepsUpdated=0`**, which is the instant comparison
+  working rather than a string comparison flooding every night.
+- Set `done`, then `dismissed`, each with the source claiming a move to 30 Sep → **0 both
+  times, and neither the title nor the date shifted.**
+- Reopened → it follows again, `nextStepsUpdated=1`.
+- Six `audit_log` rows, every one attributed to the QA profile by name.
+
+**Counts before and after are identical: accounts 23, contacts 100, live buildings 53,
+activities 843, sites 51, deals 55, `ingested_items` 292, `ingest_runs` 16, `import_batches`
+13, and MRR $46,086.33.** `next_steps` is back to **5 — 2 open, 3 dismissed**. `audit_log`
+2181 → 2190, fully accounted for: **7 rows written by QA**, all on the next step it created
+and then deleted, plus **2 `profiles` rows for the QA account itself**, which read
+"changed by —" because `user:create` uses the service role key and has no `auth.uid()`.
+
+`db:verify` **227 → 230** (one migration, plus that moving a next step records the old time,
+the new one and who moved it). `graph:probe --selftest` **41 → 51**. `typecheck`, `lint` and
+a cold `rm -rf .next && npm run build` all pass.
+
+**What this has NOT been proved against: a real moved meeting.** `npm run graph:probe` now
+counts occurrences whose `start` differs from their `originalStart` — meetings somebody has
+already dragged — and reads **"none of them has been moved from its original slot in this
+window"** on 2026-08-22. It says so plainly rather than implying the path is proved. Ryan
+moving one of his own meetings in Outlook and running the job by hand is the outstanding
+end-to-end check. (The same window read **70 events, 53 occurrences across 10 series, 40
+ahead, 13 after collapsing** — ordinary drift from yesterday's 11 and 14.)
 
 ### What changed on 2026-08-21: a next step can finally be closed
 
@@ -1055,7 +1121,7 @@ Phase 7c added:
 | `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
 | `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
-`db:verify` grew from 118 to **157 checks**, and is **227** today. The last four arrived
+`db:verify` grew from 118 to **157 checks**, and is **230** today. The last four arrived
 with no migration at all: closing a next step is behaviour, not schema.
 
 ### Tested end to end, 2026-08-17
@@ -1307,7 +1373,8 @@ audit rows), Dermatology of Cape Cod and its building reassigned to Ryan, his on
 reassigned with them, and his CONTACT row archived rather than deleted because of the coaching
 notes on it. Earlier versions of this file said he was merely deactivated. The QA logins — `qa-phase5@`, `qa-phase5b@`,
 `qa-phase7@`, `qa-phase7c@`, `qa-settings@`, `qa-phase6@`, `qa-phase6-field@`, `qa-phase6b@`,
-`qa-phase6b-field@`, `qa-sources@` and `qa-7bh@` — are **deactivated, do not delete**: they hold the audit rows for the 91
+`qa-phase6b-field@`, `qa-sources@`, `qa-7bh@`, `qa-upcoming@`, `qa-deploy@`, `qa-nextsteps@`
+and `qa-reschedule@` — are **deactivated, do not delete**: they hold the audit rows for the 91
 Longwater Drive correction and for the Phase 5b, 7a, 7c, Settings, 6a and 6b testing, and removing
 a profile would erase who made those changes. Several of them are now visible **by name** on
 `/admin/history` and on record pages, which is exactly why they are kept. (Earlier versions of this file counted eleven profiles and named four QA logins;
@@ -1520,8 +1587,8 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **227 checks** |
-| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **41** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse and the shared-mailbox display names |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **230 checks** |
+| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **51** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse, the shared-mailbox display names and the reschedule rules. Its live output also counts occurrences already moved from their original slot |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | **30** checks: the hazard cases for what a title MATCHES, plus what a matched note BECOMES — the per-source body limit, the whitespace rules and the timeline's excerpt threshold. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1816,10 +1883,24 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       branch, so the original author saw it coming. Decide where an undated commitment belongs
       before 7d writes one, rather than bolting an `.or()` onto a query that is currently a
       clean index scan.
-- [ ] **A rescheduled meeting never updates its `due_at`.** `20260818090000_ingest.sql:107`
-      claims a moved calendar event "is updated rather than duplicated"; the `alreadySeen`
-      short-circuit at `run.ts:195` means it is not. Either fix the behaviour or fix the
-      comment — a comment that states a rule this repo does not follow is worse than neither.
+- [x] ~~**A rescheduled meeting never updates its `due_at`.**~~ — **done 2026-08-22.** The
+      behaviour was fixed rather than the comment, so `20260818090000_ingest.sql:107` is now
+      **true and the migration file was deliberately not edited**. Only `open` rows move,
+      only `due_at` / `all_day` / `title`, and never a re-match. **Still unproved against a
+      real moved meeting** — `graph:probe` reports none in the current window, so Ryan
+      moving one in Outlook is the outstanding check.
+- [ ] **A CANCELLED meeting sits as an open next step for ever.** The harder sibling, and
+      deliberately its own session. Graph simply stops returning it from `calendarView` (and
+      `eventToItem` drops `isCancelled === true` anyway, which amounts to the same thing), so
+      this is **absence detection, not an update**. Two traps worth having written down
+      before anybody starts: `collapseRecurringSeries` **deliberately omits** most occurrences
+      of every series, so a naive "not seen tonight" sweep would dismiss every collapsed one;
+      and a 403, a truncated page, a deadline stop or a Graph outage would all read as mass
+      absence, so any sweep needs to run only when that mailbox's calendar returned 200,
+      untruncated, on a run that did not stop early. Flagging is probably safer than
+      auto-dismissing. **A partial mitigation shipped 2026-08-22:** a meeting renamed
+      `CANCELLED - …` now updates its title on the strip, which is the only signal Graph
+      gives for a cancellation the organiser renames rather than deletes.
 - [ ] **14 `ingested_items` are `needs_review`, and they are all the same collision: `90
       Libbey`.** Read 2026-08-21: eleven are Wound Center inspections, three are Fox Rock
       conversations with Kristen Riordan about day porter hours, one names both 97 and 90.
@@ -1850,6 +1931,19 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 **Opened by Phase 7a:**
 - [x] ~~`account_domains` is empty~~ — **18 domains are mapped and no candidates remain**, measured 2026-08-19. Ryan did this between sessions and this file had not caught up. The middle confidence tier is live.
 - [ ] The 261 orphan activities the relink could not place. Worth a look at the "what still matches nothing" list before deciding whether they are worth hand-linking at all.
+- [ ] **There is still no `ANTHROPIC_API_KEY` and no `INSPECTQA_*` variable anywhere in this
+      repo.** Re-measured 2026-08-22, because both are easy to assume have appeared. `.env.local`
+      holds exactly `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+      `NEXT_PUBLIC_SITE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `INGEST_USER_EMAIL`,
+      `INGEST_USER_PASSWORD`, `CRON_SECRET`, `GRANOLA_API_KEY`, `GRAPH_TENANT_ID`,
+      `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`. **7d and Phase 8 are both blocked on Ryan, not
+      on code.** For Phase 8 the shape is four variables following the ingest-profile pattern —
+      `INSPECTQA_SUPABASE_URL` (`https://illxdfvqvuwoqwbplgiy.supabase.co`, not a secret), that
+      project's anon key, and a dedicated account whose **RLS grants select and nothing else**,
+      because read-only has to live in policies rather than in our good intentions. And as
+      always the credentials are not the real blocker: **3–4 real rows from `buildings`,
+      `inspections` and `organizations`** come before a line of sync code, the rule that caught
+      Granola's ignored `limit` and the Graph timezone trap.
 - [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first. **Three things measured on 2026-08-20 that decide its shape:** there is **no Anthropic API key in this project**, so it needs one set in `.env.local` and in Vercel Production before a line is written; **email is not the target** — 11 linked Outlook rows with snippets of 214–252 characters, capped by `bodyPreview`'s 255 — while **Granola is**, at 138 linked notes with a median snippet of 500 and **122 of them hitting that 500 cap**, carrying genuinely commitment-shaped prose; and because the stored snippet is truncated at 500, extraction has to run **at ingest time against the live summary**, not against the mirror.
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
 
@@ -1977,6 +2071,13 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 | 2026-08-21 | **A closed row stays in place with an Undo, so `setNextStepStatus` is the one action in the app with no `revalidatePath`** | Revalidating re-renders the dashboard and drops the row the instant it is closed, taking the Undo with it — and an unrecoverable Dismiss is the exact problem this work exists to remove, since the only way back would be the SQL editor that left `changed_by` null in the first place. It is safe only because **one file reads `next_steps` and one page renders it**; the reason is written into the action, because a missing `revalidatePath` otherwise reads as an omission |
 | 2026-08-21 | **The owner filter on the update is app policy, not a security boundary, and `db:verify` says so out loud** | `next_steps` is `member_rw`: any member may close any next step, and a check now asserts that rather than leaving it to be discovered. The app narrows it to your own because closing somebody else's work silently is rude. It comes with `.select('id')` and an explicit refusal — without that, a row that is not yours updates zero rows and PostgREST reports success, so the screen would say "Marked done" over a write that never happened, which is the class of quiet lie this app refuses everywhere else |
 | 2026-08-21 | **Dismissing an occurrence means "not this week", not "never again"** | `collapseRecurringSeries` keeps the earliest occurrence still ahead, so a dismissal holds for as long as that occurrence is in the future and nothing slides in behind it; once its start passes, the next one arrives as a new next step with its own `external_id`. Correct, and not obvious — a person may well expect the following week's to appear at once. Recorded rather than changed, because the alternative is a "dismiss the whole series" concept that nobody has asked for |
+| 2026-08-22 | **A calendar event that MOVES updates its next step; the migration comment stops being a lie** | `20260818090000_ingest.sql:107` promised this from the beginning and the unique key delivered only half of it — duplication was prevented, the update was never written. It cost nothing while next steps were invisible; it costs trust now they are the first thing on the dashboard, because a meeting moved to Thursday reads as Tuesday and then as *missed*. The fix goes INSIDE the existing already-seen branch without touching its condition, which is keyed on `'linked'` for a completely different reason — retro-linking a Granola note after an alias is added |
+| 2026-08-22 | Only an **open** next step is touched by a move | Closing one was a decision, and a nightly job that quietly reopens or re-times it is how somebody stops trusting the strip. It also protects a rule already written down: `collapseRecurringSeries` keeps the earliest occurrence still ahead, so a dismissal is *meant* to hold while that occurrence is in the future, and reviving it on a move would silently undo "dismiss means not this week" |
+| 2026-08-22 | **`due_at` is compared as an instant, never as a string** | The single line the feature turns on. Postgres returns `+00:00` and the item carries `.000Z` — the same moment written two ways — so a string comparison would report every meeting as rescheduled every night, write an audit row per meeting per run, and make the new counter on `/admin/ingest` meaningless. Pinned by a `graph:probe --selftest` check that names the trap, and proved against the real database by an identical second run reporting zero |
+| 2026-08-22 | The title moves with the time; `detail` deliberately does not | `title`, `due_at` and `all_day` are exactly what the dashboard strip draws, so a stale one of them is a visible lie. A rename to `CANCELLED - site walk` is also the **only** signal Graph gives for a cancellation the organiser renames rather than deletes, which is worth having while real cancellation detection waits for its own session. `detail` is rendered nowhere, so keeping it current would be audit-log noise and nothing else |
+| 2026-08-22 | A move is **not** a re-match | If the attendees changed, the account and contact links stay as they were. A meeting silently moving to a different account overnight is a suggestion-shaped problem — something a person reads and accepts — not something an update does on its own at 3am |
+| 2026-08-22 | **Cancellation detection is absence detection, and is its own session** | Graph stops returning a cancelled event entirely, so nothing arrives to compare against. Two traps make this genuinely dangerous rather than merely fiddly: `collapseRecurringSeries` deliberately omits most occurrences, so a naive "not seen tonight" sweep would dismiss every collapsed one; and a 403, a truncated page or a deadline stop would read as mass absence. Auto-dismissing real meetings is a worse failure than the one being fixed |
+| 2026-08-22 | The reschedule rule is a **pure function**, pinned by the probe rather than by a unit runner | This repo has no unit runner, and the established answer is the probe self-tests — 51 checks that run with no network, no database and no credentials. Keeping `nextStepPatch()` free of a clock and a client is what makes all ten of its rules testable that way, including the two that are impossible to see in a browser: a `done` row being left alone, and two spellings of one instant not being a change |
 | 2026-08-13 | Health dots are the one semantic use of colour in the app | Green/amber/red is what the team already reads on the spreadsheet, and navy cannot carry that meaning. It stays inside the brand rules because they are **dots, never text** — the label sits beside each one in normal charcoal, so nothing depends on seeing the colour. Amber is the brand gold, used as a fill, which is exactly what the guide permits |
 
 <!-- BEGIN:nextjs-agent-rules -->
