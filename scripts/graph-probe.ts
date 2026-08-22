@@ -24,8 +24,8 @@
  * that will actually run at 3am — granted for one mailbox, denied for another.
  */
 
-import { collapseRecurringSeries, graphTime } from '@/lib/ingest/graph'
-import { nextStepPatch, type RawItem } from '@/lib/ingest'
+import { calendarExternalId, collapseRecurringSeries, graphTime, isCancelledEvent } from '@/lib/ingest/graph'
+import { nextStepPatch, sightingPatch, type RawItem } from '@/lib/ingest'
 import { matchParticipants, type Directory } from '@/lib/ingest/match'
 import { splitName } from '@/lib/ingest/addresses'
 import type { Participant } from '@/lib/ingest'
@@ -127,7 +127,16 @@ async function getToken(tenantId: string, clientId: string, clientSecret: string
   return body.access_token
 }
 
-type GraphResult = { status: number; items: Record<string, unknown>[]; error: string | null }
+type GraphResult = {
+  status: number
+  items: Record<string, unknown>[]
+  error: string | null
+  /** Graph offered another page and this probe did not follow it. The probe
+   *  asks for $top=200 in one request, so this being true means the window is
+   *  bigger than one page — which is exactly the condition under which the
+   *  nightly job refuses to draw any conclusion from what it did not see. */
+  truncated: boolean
+}
 
 async function graphGet(token: string, path: string): Promise<GraphResult> {
   let response: Response
@@ -139,7 +148,12 @@ async function graphGet(token: string, path: string): Promise<GraphResult> {
     })
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : String(caught)
-    return { status: 0, items: [], error: `no response after ${TIMEOUT_MS / 1000}s (${message})` }
+    return {
+      status: 0,
+      items: [],
+      error: `no response after ${TIMEOUT_MS / 1000}s (${message})`,
+      truncated: false,
+    }
   }
 
   if (!response.ok) {
@@ -150,11 +164,19 @@ async function graphGet(token: string, path: string): Promise<GraphResult> {
     } catch {
       // Not JSON; the truncated body is more useful than nothing.
     }
-    return { status: response.status, items: [], error: message }
+    return { status: response.status, items: [], error: message, truncated: false }
   }
 
-  const body = (await response.json()) as { value?: Record<string, unknown>[] }
-  return { status: response.status, items: body.value ?? [], error: null }
+  const body = (await response.json()) as {
+    value?: Record<string, unknown>[]
+    '@odata.nextLink'?: string
+  }
+  return {
+    status: response.status,
+    items: body.value ?? [],
+    error: null,
+    truncated: Boolean(body['@odata.nextLink']),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,12 +302,190 @@ function selftest(): number {
   matchingChecks(check)
   recurrenceChecks(check)
   displayNameChecks(check)
+  absenceChecks(check)
 
   console.log(`\n${failures === 0 ? 'PASSED' : 'FAILED'} — ${total - failures}/${total} checks\n`)
   return failures
 }
 
 type Check = (name: string, ok: boolean, detail?: string) => void
+
+/**
+ * A meeting that is no longer on the calendar.
+ *
+ * The rules here are almost impossible to see any other way: two of them only
+ * ever fire three nights apart, and one of them — a meeting that is simply
+ * present writing nothing at all — is invisible by definition. `sightingPatch`
+ * is pure and takes its clock as an argument precisely so all of it can be
+ * pinned here, with no network, no database and no credentials.
+ */
+function absenceChecks(check: Check) {
+  console.log('\n  a meeting that vanished')
+
+  const clean = { missedSightings: 0, firstMissedAt: null, vanishedAt: null }
+  const T0 = '2026-08-22T07:00:00.000Z'
+  const plus21h = '2026-08-23T04:00:00.000Z'
+  const plus50h = '2026-08-24T09:00:00.000Z'
+
+  // The rule the whole thing rests on: the ordinary night writes NOTHING.
+  check(
+    'a meeting that is simply there is not written to at all',
+    sightingPatch(clean, 'present', T0) === null,
+  )
+
+  const first = sightingPatch(clean, 'absent', T0)
+  check(
+    'the first miss counts one and stamps when the run of misses began',
+    first?.mirror?.missed_sightings === 1 && first?.mirror?.first_missed_at === T0,
+    JSON.stringify(first),
+  )
+  check('...and does not flag anything on one night', first?.nextStep === undefined)
+
+  // The trap this guards: move first_missed_at on every miss and the elapsed
+  // test measures the gap between the last two runs — about two hours.
+  const second = sightingPatch(
+    { missedSightings: 1, firstMissedAt: T0, vanishedAt: null },
+    'absent',
+    plus21h,
+  )
+  check(
+    'a later miss leaves the original first_missed_at alone',
+    second?.mirror?.first_missed_at === T0 && second?.mirror?.missed_sightings === 2,
+    JSON.stringify(second),
+  )
+
+  // Three misses is only about a night and a half, because the job runs twice
+  // a night. This is the check that says so.
+  const thirdTooSoon = sightingPatch(
+    { missedSightings: 2, firstMissedAt: T0, vanishedAt: null },
+    'absent',
+    plus21h,
+  )
+  check(
+    'three misses inside 48 hours is NOT enough — the job runs twice a night',
+    thirdTooSoon?.mirror?.missed_sightings === 3 && thirdTooSoon?.nextStep === undefined,
+    JSON.stringify(thirdTooSoon),
+  )
+
+  const thirdLater = sightingPatch(
+    { missedSightings: 2, firstMissedAt: T0, vanishedAt: null },
+    'absent',
+    plus50h,
+  )
+  check(
+    'three misses spanning more than 48 hours flags it, as absent',
+    thirdLater?.nextStep?.vanished_at === plus50h &&
+      thirdLater?.nextStep?.vanished_reason === 'absent',
+    JSON.stringify(thirdLater),
+  )
+
+  // Time alone is not enough either — a mailbox unreadable for a week produces
+  // no windows at all, so it must not age its way into a flag.
+  const longGapOneMiss = sightingPatch(
+    { missedSightings: 0, firstMissedAt: null, vanishedAt: null },
+    'absent',
+    plus50h,
+  )
+  check(
+    '48 hours with only one miss flags nothing — both conditions, not either',
+    longGapOneMiss?.nextStep === undefined,
+  )
+
+  check(
+    'an already-flagged meeting stops counting',
+    sightingPatch({ missedSightings: 3, firstMissedAt: T0, vanishedAt: plus50h }, 'absent', T0) ===
+      null,
+  )
+
+  // Graph stating it outright is a fact, not silence, so it needs no counter.
+  const cancelled = sightingPatch(clean, 'cancelled', T0)
+  check(
+    'a cancelled meeting is flagged the same night, with no misses at all',
+    cancelled?.nextStep?.vanished_at === T0 &&
+      cancelled?.nextStep?.vanished_reason === 'cancelled' &&
+      cancelled?.mirror === undefined,
+    JSON.stringify(cancelled),
+  )
+  check(
+    'and saying so twice writes nothing the second time',
+    sightingPatch({ missedSightings: 0, firstMissedAt: null, vanishedAt: T0 }, 'cancelled', T0) ===
+      null,
+  )
+
+  const back = sightingPatch(
+    { missedSightings: 3, firstMissedAt: T0, vanishedAt: plus50h },
+    'present',
+    plus50h,
+  )
+  check(
+    'a meeting that comes back clears the flag AND the reason',
+    back?.nextStep?.vanished_at === null && back?.nextStep?.vanished_reason === null,
+    JSON.stringify(back),
+  )
+  check(
+    '...and zeroes the counters with it',
+    back?.mirror?.missed_sightings === 0 && back?.mirror?.first_missed_at === null,
+  )
+
+  const partial = sightingPatch(
+    { missedSightings: 2, firstMissedAt: T0, vanishedAt: null },
+    'present',
+    plus21h,
+  )
+  check(
+    'misses that never reached a flag are reset without touching the next step',
+    partial?.mirror?.missed_sightings === 0 && partial?.nextStep === undefined,
+    JSON.stringify(partial),
+  )
+
+  console.log('\n  identifying a meeting')
+
+  // The seen-set and eventToItem must agree about what a meeting IS, or a
+  // whole series reads as cancelled. One function, checked here.
+  check(
+    'an occurrence is identified by its ORIGINAL start, not the moved one',
+    calendarExternalId({
+      iCalUId: 'ical-1',
+      type: 'occurrence',
+      originalStart: '2026-08-27T11:00:00.0000000',
+      start: { dateTime: '2026-08-29T11:00:00.0000000', timeZone: 'UTC' },
+    }) === 'ical-1/2026-08-27T11:00:00.0000000',
+  )
+  check(
+    'a one-off keeps its bare iCalUId',
+    calendarExternalId({ iCalUId: 'ical-2', type: 'singleInstance' }) === 'ical-2',
+  )
+  check('an event with no iCalUId identifies nothing', calendarExternalId({}) === null)
+  check(
+    'isCancelled is read strictly — a missing field is not a cancellation',
+    isCancelledEvent({ isCancelled: true }) &&
+      !isCancelledEvent({}) &&
+      !isCancelledEvent({ isCancelled: 'true' }),
+  )
+
+  // Trap one, as a check rather than only as a comment: the seen-set is built
+  // BEFORE the collapse, so every occurrence of a series counts as present.
+  const now = Date.parse('2026-08-22T00:00:00.000Z')
+  const series = [1, 8, 15, 22].map((day) => ({
+    iCalUId: `ical-week-${day}`,
+    seriesMasterId: 'master-1',
+    type: 'occurrence',
+    originalStart: `2026-09-${String(day).padStart(2, '0')}T11:00:00.0000000`,
+    start: { dateTime: `2026-09-${String(day).padStart(2, '0')}T11:00:00.0000000`, timeZone: 'UTC' },
+  }))
+  const collapsed = collapseRecurringSeries(series, now)
+  check(
+    'the collapse keeps one occurrence of a four-week series',
+    collapsed.length === 1,
+    `kept ${collapsed.length}`,
+  )
+  check(
+    'but the pre-collapse set holds all four — which is what a sweep must use',
+    series.map(calendarExternalId).filter(Boolean).length === 4,
+  )
+}
+
+
 
 /** Enough of a Directory to exercise the tiers. `phrases` and `targets` are
  *  title matching, which is Granola's business and not reachable from here. */
@@ -852,6 +1052,29 @@ async function main() {
         : `  ${rescheduled.length} of them HAS been moved from its original slot — ` +
             'each keeps its original-start external_id, which is what lets run.ts update it',
     )
+    // Cancelled-but-still-returned events. Graph tombstones some cancellations
+    // rather than removing them, and that is the STRONGEST signal available:
+    // the event came back fine, with a flag on it, so it needs no waiting and
+    // no counter. A hard delete leaves nothing at all and is what the three
+    // nights of silence are for.
+    const cancelled = events.items.filter(isCancelledEvent)
+    console.log(
+      cancelled.length === 0
+        ? '  none of them is marked cancelled in this window'
+        : `  ${cancelled.length} of them IS marked cancelled — these flag a next step the ` +
+            'same night, rather than waiting for three nights of silence',
+    )
+
+    // Whether this window could be swept at all. run.ts only judges absence
+    // against a window a mailbox vouched for, and a truncated page holds real
+    // events while LOOKING complete — so a run that read part of a calendar
+    // must decline to draw any conclusion from what it did not see.
+    console.log(
+      events.truncated
+        ? '  this window came back TRUNCATED, so a nightly run would refuse to sweep it'
+        : '  this window was complete, so a nightly run would sweep it for vanished meetings',
+    )
+
     console.log('\n  the first few shapes:')
     events.items.slice(0, 5).forEach((e, i) => report(`event ${i + 1}`, e))
   }

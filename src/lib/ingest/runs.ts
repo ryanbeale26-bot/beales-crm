@@ -63,6 +63,7 @@ export async function finishRun(
       activities_created: summary.activitiesCreated,
       next_steps_created: summary.nextStepsCreated,
       next_steps_updated: summary.nextStepsUpdated,
+      next_steps_vanished: summary.nextStepsVanished,
       suggestions_written: summary.suggestionsWritten,
       stopped_early: summary.stoppedEarly,
       truncated: summary.truncated,

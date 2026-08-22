@@ -32,6 +32,8 @@ export type RunRow = {
   nextStepsCreated: number
   /** Meetings that had MOVED or been renamed since we last saw them. */
   nextStepsUpdated: number
+  /** Meetings that have gone from the calendar altogether. */
+  nextStepsVanished: number
   suggestionsWritten: number
   stoppedEarly: boolean
   truncated: string[]
@@ -52,7 +54,7 @@ export async function fetchRunHealth(supabase: Supabase, limit = 10): Promise<Ru
   const { data } = await supabase
     .from('ingest_runs')
     .select(
-      'id, started_at, finished_at, ok, ran_for_ms, sources, seen, ingested, already_seen, activities_created, next_steps_created, next_steps_updated, suggestions_written, stopped_early, truncated, errors',
+      'id, started_at, finished_at, ok, ran_for_ms, sources, seen, ingested, already_seen, activities_created, next_steps_created, next_steps_updated, next_steps_vanished, suggestions_written, stopped_early, truncated, errors',
     )
     .order('started_at', { ascending: false })
     .limit(limit)
@@ -70,6 +72,7 @@ export async function fetchRunHealth(supabase: Supabase, limit = 10): Promise<Ru
     activitiesCreated: row.activities_created,
     nextStepsCreated: row.next_steps_created,
     nextStepsUpdated: row.next_steps_updated,
+    nextStepsVanished: row.next_steps_vanished,
     suggestionsWritten: row.suggestions_written,
     stoppedEarly: row.stopped_early,
     truncated: row.truncated ?? [],

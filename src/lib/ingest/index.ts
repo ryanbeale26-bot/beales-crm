@@ -72,10 +72,55 @@ export type RawItem = {
   scheduled?: { startsAt: string; allDay: boolean } | null
 }
 
+/**
+ * A stretch of one calendar that a source is prepared to VOUCH for.
+ *
+ * The thing that makes absence detection safe, and the reason it is a type
+ * rather than a boolean somewhere. Deleting a meeting in Outlook makes it vanish
+ * from `calendarView` — but so does a 403, a truncated page, a deadline stop and
+ * a Graph outage, and all four would otherwise read as every meeting being
+ * cancelled at once.
+ *
+ * So a source emits one of these ONLY for a mailbox whose calendar came back
+ * 200, untruncated, before the deadline. No entry means no sweep. A source that
+ * cannot vouch — fixtures, Granola — omits the field entirely and needs no code
+ * at all to opt out, which is why the field is optional: failing safe is the
+ * default rather than a branch somebody has to remember to write.
+ */
+export type CalendarWindow = {
+  /** Whose calendar. Resolved to a profile against the mailbox list. */
+  mailboxEmail: string
+  /**
+   * What this vouches for, and nothing outside it. A next step due beyond the
+   * window was never asked for, so its absence proves nothing — which is also
+   * what stops a genuinely past meeting being read as cancelled.
+   */
+  from: string
+  to: string
+  /**
+   * Every event id the window held, taken BEFORE `collapseRecurringSeries`.
+   *
+   * This is the single most important line in the feature. The collapse
+   * deliberately keeps only the earliest occurrence still ahead of each series,
+   * so a set built after it is missing most occurrences of every standing
+   * meeting — and a sweep against that set would flag them all.
+   */
+  present: string[]
+  /** Ids the source returned marked cancelled, which is a fact rather than an
+   *  inference and is treated as one. */
+  cancelled: string[]
+}
+
 export type SourceFetch = (options: {
   since: string
   deadline: number
-}) => Promise<{ items: RawItem[]; cursor: string | null }>
+}) => Promise<{
+  items: RawItem[]
+  cursor: string | null
+  /** Complete calendar windows only — see `CalendarWindow`. Omitted by any
+   *  source that cannot promise it saw everything. */
+  calendar?: CalendarWindow[]
+}>
 
 /** How much of a message body is kept. Enough to review a suggestion against,
  *  and nowhere near enough to be a mail archive. */
@@ -256,4 +301,109 @@ function sameInstant(a: string | null, b: string): boolean {
   const left = new Date(a).getTime()
   const right = new Date(b).getTime()
   return Number.isFinite(left) && Number.isFinite(right) && left === right
+}
+
+/**
+ * How many complete calendar windows in a row must come back without a meeting
+ * before we believe it is gone, and how long that has to have taken.
+ *
+ * BOTH, not either. The job fires twice a night (vercel.json, 07:00 and 09:00
+ * UTC), so three misses on their own is about a night and a half — not the three
+ * nights the number is meant to mean. The hours are what turn a count of runs
+ * into a span of days, and they hold up on a night when only one pass ran
+ * because the first stopped at its deadline.
+ */
+export const MISSES_BEFORE_BELIEVED = 3
+export const HOURS_BEFORE_BELIEVED = 48
+
+/** What a complete calendar window said about one meeting. `cancelled` is a fact
+ *  the source stated; `absent` is silence, and silence is inference. */
+export type Sighting = 'present' | 'absent' | 'cancelled'
+
+/** What is already recorded about this meeting's disappearance. The counters
+ *  live on the mirror and the conclusion lives on the next step — see the
+ *  migration for why the two are deliberately kept apart. */
+export type SightingState = {
+  missedSightings: number
+  firstMissedAt: string | null
+  vanishedAt: string | null
+}
+
+/** Two writes, either of which may be absent. `mirror` is the running count on
+ *  `ingested_items`; `nextStep` is the flag a person actually sees. */
+export type SightingPatch = {
+  mirror?: { missed_sightings: number; first_missed_at: string | null }
+  nextStep?: { vanished_at: string | null; vanished_reason: string | null }
+}
+
+/**
+ * What tonight's sighting should change. Null means there is nothing to do.
+ *
+ * Pure, for the same reason `nextStepPatch` above is pure: `graph:probe
+ * --selftest` runs with no network, no database and no credentials, and these
+ * rules are otherwise close to untestable — two of them only ever fire three
+ * nights apart.
+ *
+ * Five rules, each load-bearing:
+ *
+ *   - **A meeting that is simply there writes NOTHING.** The overwhelmingly
+ *     common case has to return null, or every meeting in the book is touched
+ *     twice a night for ever. Same argument as comparing `due_at` as an instant
+ *     rather than as a string: a rule that fires every night means nothing.
+ *
+ *   - **A meeting that comes BACK is un-flagged**, counters and reason with it.
+ *     Somebody restoring a deleted meeting, and a run of windows that were wrong
+ *     three nights together, both end with the strip telling the truth again.
+ *
+ *   - **`cancelled` flags at once, whatever the counter says.** It cannot be a
+ *     bad night: the event came back fine, with a flag on it. Waiting three
+ *     nights to repeat something the source stated outright would be timid.
+ *
+ *   - **An already-flagged row stops counting.** The counter measures how much
+ *     evidence there is, not how long the meeting has been gone, and nothing
+ *     reads it once the conclusion is drawn.
+ *
+ *   - **`first_missed_at` is stamped on the FIRST miss and never moved.** Move
+ *     it on each miss and the elapsed guard measures the gap between the last
+ *     two runs — about two hours — which would quietly reduce the whole rule to
+ *     "three misses".
+ */
+export function sightingPatch(
+  state: SightingState,
+  sighting: Sighting,
+  now: string,
+): SightingPatch | null {
+  if (sighting === 'present') {
+    // Nothing recorded and nothing flagged: the ordinary night, and no write.
+    if (state.missedSightings === 0 && state.firstMissedAt === null && state.vanishedAt === null) {
+      return null
+    }
+    return {
+      mirror: { missed_sightings: 0, first_missed_at: null },
+      ...(state.vanishedAt !== null
+        ? { nextStep: { vanished_at: null, vanished_reason: null } }
+        : {}),
+    }
+  }
+
+  if (sighting === 'cancelled') {
+    if (state.vanishedAt !== null) return null // already said so
+    return { nextStep: { vanished_at: now, vanished_reason: 'cancelled' } }
+  }
+
+  // Absent, and believed already — there is nothing left to learn.
+  if (state.vanishedAt !== null) return null
+
+  const missed = state.missedSightings + 1
+  const firstMissedAt = state.firstMissedAt ?? now
+  const patch: SightingPatch = {
+    mirror: { missed_sightings: missed, first_missed_at: firstMissedAt },
+  }
+
+  const elapsedHours = (new Date(now).getTime() - new Date(firstMissedAt).getTime()) / 3_600_000
+  if (missed >= MISSES_BEFORE_BELIEVED && elapsedHours >= HOURS_BEFORE_BELIEVED) {
+    patch.nextStep = { vanished_at: now, vanished_reason: 'absent' }
+  }
+
+  return patch
 }

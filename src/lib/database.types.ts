@@ -1484,6 +1484,7 @@ export type Database = {
           ingested: number
           next_steps_created: number
           next_steps_updated: number
+          next_steps_vanished: number
           ok: boolean | null
           ran_for_ms: number | null
           seen: number
@@ -1505,6 +1506,7 @@ export type Database = {
           ingested?: number
           next_steps_created?: number
           next_steps_updated?: number
+          next_steps_vanished?: number
           ok?: boolean | null
           ran_for_ms?: number | null
           seen?: number
@@ -1526,6 +1528,7 @@ export type Database = {
           ingested?: number
           next_steps_created?: number
           next_steps_updated?: number
+          next_steps_vanished?: number
           ok?: boolean | null
           ran_for_ms?: number | null
           seen?: number
@@ -1629,12 +1632,14 @@ export type Database = {
           activity_id: string | null
           direction: string | null
           external_id: string
+          first_missed_at: string | null
           first_seen_at: string
           id: string
           last_seen_at: string
           mailbox_id: string | null
           matched_by: Database["public"]["Enums"]["match_confidence"] | null
           matched_on: string | null
+          missed_sightings: number
           next_step_id: string | null
           occurred_at: string
           participants: Json
@@ -1648,12 +1653,14 @@ export type Database = {
           activity_id?: string | null
           direction?: string | null
           external_id: string
+          first_missed_at?: string | null
           first_seen_at?: string
           id?: string
           last_seen_at?: string
           mailbox_id?: string | null
           matched_by?: Database["public"]["Enums"]["match_confidence"] | null
           matched_on?: string | null
+          missed_sightings?: number
           next_step_id?: string | null
           occurred_at: string
           participants?: Json
@@ -1667,12 +1674,14 @@ export type Database = {
           activity_id?: string | null
           direction?: string | null
           external_id?: string
+          first_missed_at?: string | null
           first_seen_at?: string
           id?: string
           last_seen_at?: string
           mailbox_id?: string | null
           matched_by?: Database["public"]["Enums"]["match_confidence"] | null
           matched_on?: string | null
+          missed_sightings?: number
           next_step_id?: string | null
           occurred_at?: string
           participants?: Json
@@ -2026,6 +2035,8 @@ export type Database = {
           status: Database["public"]["Enums"]["next_step_status"]
           title: string
           updated_at: string
+          vanished_at: string | null
+          vanished_reason: string | null
         }
         Insert: {
           account_id?: string | null
@@ -2049,6 +2060,8 @@ export type Database = {
           status?: Database["public"]["Enums"]["next_step_status"]
           title: string
           updated_at?: string
+          vanished_at?: string | null
+          vanished_reason?: string | null
         }
         Update: {
           account_id?: string | null
@@ -2072,6 +2085,8 @@ export type Database = {
           status?: Database["public"]["Enums"]["next_step_status"]
           title?: string
           updated_at?: string
+          vanished_at?: string | null
+          vanished_reason?: string | null
         }
         Relationships: [
           {

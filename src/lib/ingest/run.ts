@@ -15,10 +15,13 @@ import { propose, type Proposal } from '@/lib/ingest/suggestions'
 import {
   nextStepPatch,
   nextStepTitle,
+  sightingPatch,
   toBody,
   toSnippet,
+  type CalendarWindow,
   type RawItem,
   type ScheduledNextStep,
+  type Sighting,
   type SourceFetch,
   type Supabase,
 } from '@/lib/ingest'
@@ -48,6 +51,11 @@ export type RunSummary = {
   /** Open next steps whose calendar event had MOVED or been renamed since we
    *  last saw it. Rows changed, not rows checked. */
   nextStepsUpdated: number
+  /** Open next steps flagged as no longer on the calendar. Rows FLAGGED, not
+   *  rows checked and not rows still missing — a meeting already flagged is not
+   *  counted again, and a miss that has not yet been believed is not counted at
+   *  all. */
+  nextStepsVanished: number
   suggestionsWritten: number
   alreadySeen: number
   errors: string[]
@@ -67,6 +75,7 @@ const EMPTY: RunSummary = {
   activitiesCreated: 0,
   nextStepsCreated: 0,
   nextStepsUpdated: 0,
+  nextStepsVanished: 0,
   suggestionsWritten: 0,
   alreadySeen: 0,
   errors: [],
@@ -115,6 +124,7 @@ export async function runIngest(
   const dir = await loadDirectory(supabase)
   const types = await loadActivityTypes(supabase)
   const proposals: Proposal[] = []
+  const windows: CalendarWindow[] = []
 
   for (const source of options.sources) {
     if (Date.now() > options.deadline) {
@@ -122,7 +132,7 @@ export async function runIngest(
       break
     }
 
-    let batch: { items: RawItem[]; cursor: string | null }
+    let batch: { items: RawItem[]; cursor: string | null; calendar?: CalendarWindow[] }
     try {
       batch = await source.fetch({ since: options.since, deadline: options.deadline })
     } catch (caught) {
@@ -137,6 +147,12 @@ export async function runIngest(
     // item a timestamp touch — but a night that read half of Granola must not
     // look like a night that read all of it.
     if (batch.cursor) summary.truncated.push(source.name)
+
+    // Only windows the source was willing to vouch for reach here; a mailbox
+    // that 403'd, timed out or came back truncated contributes nothing, so the
+    // sweep below simply has less to look at rather than wrong things to look
+    // at. See CalendarWindow.
+    if (batch.calendar) windows.push(...batch.calendar)
 
     for (const item of batch.items) {
       if (Date.now() > options.deadline) {
@@ -164,6 +180,17 @@ export async function runIngest(
     }
   }
 
+  // After everything that ARRIVED has been dealt with, deal with what did not.
+  // Wrapped so a sweep failure never costs the run the work it already did:
+  // absence is the least urgent thing happening tonight.
+  try {
+    await sweepVanished(supabase, dir, windows, summary)
+  } catch (caught) {
+    summary.errors.push(
+      `Calendar sweep: ${caught instanceof Error ? caught.message : String(caught)}`,
+    )
+  }
+
   if (proposals.length > 0) {
     const { written, error } = await propose(supabase, proposals)
     summary.suggestionsWritten = written
@@ -171,6 +198,122 @@ export async function runIngest(
   }
 
   return summary
+}
+
+/**
+ * What the calendar no longer holds.
+ *
+ * The other half of the reschedule fix, and a different KIND of problem. A move
+ * arrives carrying a new time and `nextStepPatch` compares it. A cancellation
+ * arrives as nothing at all — Graph simply stops returning the event — so there
+ * is no item, no mirror lookup, and nothing that could ever notice.
+ *
+ * Three rules keep this from being dangerous, and every one of them matters:
+ *
+ *   - **Only a window a source VOUCHED for is swept.** A 403, a truncated page,
+ *     a deadline stop and an outage all look exactly like a deleted calendar,
+ *     and all four are excluded upstream by simply not producing a
+ *     `CalendarWindow`. Nothing here has to remember to check.
+ *
+ *   - **Only next steps due INSIDE that window are judged.** The window is the
+ *     two-day lookback to thirty days ahead that was actually asked for, so a
+ *     meeting due last week was never requested and its absence proves nothing.
+ *     This is also what stops the "Still open" pile — the very rows this feature
+ *     exists to serve — being flagged wholesale on the first night.
+ *
+ *   - **`present` is the PRE-collapse set.** `collapseRecurringSeries` keeps
+ *     only the earliest occurrence still ahead of each series, so judging
+ *     against what survives it would flag every other occurrence of every
+ *     standing meeting. graph.ts builds the set before collapsing for this
+ *     reason alone.
+ *
+ * One accepted false positive, worth knowing rather than fixing: a meeting
+ * dragged beyond the thirty-day horizon leaves the window and reads as absent.
+ * The wording on the strip — no longer on the calendar — stays true of the
+ * stretch we can see, and the flag clears itself the moment the meeting comes
+ * back into range.
+ *
+ * Nothing here ever closes a next step. It marks the row and leaves it open,
+ * because absence is an inference and this app applies a link only when it is a
+ * fact. The person still presses Dismiss, which already has an Undo.
+ */
+async function sweepVanished(
+  supabase: Supabase,
+  dir: Directory,
+  windows: CalendarWindow[],
+  summary: RunSummary,
+): Promise<void> {
+  for (const window of windows) {
+    const address = normaliseAddress(window.mailboxEmail)
+    const colleague = address ? dir.colleaguesByEmail.get(address) : undefined
+    // A window for somebody the directory does not know is not something to
+    // reason about. It cannot happen today — the mailbox list is built from
+    // profiles — but guessing would be worse than skipping.
+    if (!colleague) continue
+
+    const { data, error } = await supabase
+      .from('ingested_items')
+      .select(
+        'id, external_id, missed_sightings, first_missed_at, next_steps!inner ( id, status, due_at, vanished_at )',
+      )
+      .eq('source', 'outlook_calendar')
+      .eq('mailbox_id', colleague.id)
+      .not('next_step_id', 'is', null)
+      .eq('next_steps.status', 'open')
+      .gte('next_steps.due_at', window.from)
+      .lt('next_steps.due_at', window.to)
+
+    if (error) throw new Error(error.message)
+
+    const present = new Set(window.present)
+    const cancelled = new Set(window.cancelled)
+
+    for (const row of data ?? []) {
+      const step = row.next_steps as unknown as {
+        id: string
+        status: string
+        due_at: string | null
+        vanished_at: string | null
+      } | null
+      if (!step) continue
+
+      const sighting: Sighting = cancelled.has(row.external_id)
+        ? 'cancelled'
+        : present.has(row.external_id)
+          ? 'present'
+          : 'absent'
+
+      const patch = sightingPatch(
+        {
+          missedSightings: row.missed_sightings,
+          firstMissedAt: row.first_missed_at,
+          vanishedAt: step.vanished_at,
+        },
+        sighting,
+        new Date().toISOString(),
+      )
+      if (!patch) continue
+
+      if (patch.mirror) {
+        const { error: mirrorError } = await supabase
+          .from('ingested_items')
+          .update(patch.mirror)
+          .eq('id', row.id)
+        if (mirrorError) throw new Error(`mirror: ${mirrorError.message}`)
+      }
+
+      if (patch.nextStep) {
+        const { error: stepError } = await supabase
+          .from('next_steps')
+          .update(patch.nextStep)
+          .eq('id', step.id)
+        if (stepError) throw new Error(`next step: ${stepError.message}`)
+        // Counted only when a flag goes ON. Clearing one is a meeting coming
+        // back, which is good news and not this number.
+        if (patch.nextStep.vanished_at !== null) summary.nextStepsVanished += 1
+      }
+    }
+  }
 }
 
 async function ingestOne(

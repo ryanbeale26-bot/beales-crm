@@ -17,6 +17,10 @@ export type NextStep = {
   accountId: string | null
   accountName: string | null
   contactName: string | null
+  /** Set when the calendar stopped offering this meeting. `cancelled` is a fact
+   *  Graph stated; `absent` is inferred from three complete windows in a row not
+   *  holding it. The row is still OPEN — this only marks it. */
+  vanished: 'cancelled' | 'absent' | null
 }
 
 export type TodaysMeetings = {
@@ -32,7 +36,7 @@ export type TodaysMeetings = {
  *  string literal for supabase-js to infer the row type at all, so the only way
  *  to keep the three queries agreeing about their own shape is to name it once.
  */
-const MEETING_COLUMNS = `id, title, due_at, all_day, account_id,
+const MEETING_COLUMNS = `id, title, due_at, all_day, account_id, vanished_at, vanished_reason,
        accounts ( name ),
        contacts ( first_name, last_name )`
 
@@ -42,6 +46,8 @@ type RawRow = {
   due_at: string | null
   all_day: boolean
   account_id: string | null
+  vanished_at: string | null
+  vanished_reason: string | null
   accounts: { name: string } | null
   contacts: { first_name: string; last_name: string } | null
 }
@@ -57,6 +63,10 @@ function toNextStep(row: RawRow): NextStep {
     accountId: row.account_id,
     accountName: account?.name ?? null,
     contactName: contact ? `${contact.first_name} ${contact.last_name}`.trim() : null,
+    // Read off vanished_at, not the reason: the timestamp is what says it is
+    // flagged, and the reason only words it.
+    vanished:
+      row.vanished_at === null ? null : row.vanished_reason === 'cancelled' ? 'cancelled' : 'absent',
   }
 }
 

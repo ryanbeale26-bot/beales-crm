@@ -226,8 +226,86 @@ works before more data arrived. Phase 6 and InspectQA follow.
 
 ## Current status
 
-**Phase:** 7b shipped and then hardened. Phases 1–7 are complete except 7d.
-**Last session:** 2026-08-22.
+**Phase:** 7b shipped and then hardened twice — a moved meeting updates, and a cancelled
+one is flagged. Phases 1–7 are complete except 7d.
+**Last session:** 2026-08-22 (second session).
+
+### What changed on 2026-08-22 (second session): a cancelled meeting stops sitting there
+
+**The other half of the reschedule problem, and a different KIND of problem.** A move
+ARRIVES carrying a new time and `nextStepPatch()` compares it. A cancellation arrives as
+nothing at all — delete a meeting in Outlook and Graph simply stops returning it from
+`calendarView` — so there was no item, no mirror lookup, and nothing that could ever
+notice. The next step went overdue, dropped into *Still open*, and stayed there for ever.
+
+**It flags. It never closes.** Ryan's call and the right one: absence is an inference, and
+this app applies a link only when it is a fact. A wrong flag costs a glance; a wrong
+auto-dismissal silently removes a real meeting from the only screen it appears on. The
+row stays `open` and gains a marker; the person still presses Dismiss, which already has
+an Undo. There is deliberately **no new `next_step_status` value**.
+
+| Thing | Why it is the way it is |
+|---|---|
+| **`SourceFetch` gained an OPTIONAL `calendar` field, so `fixtures.ts` and `granola.ts` did not change at all** | This was the real design question and the answer is that silence IS the vouching. A source emits a `CalendarWindow` only for a mailbox whose calendar came back **200, untruncated, before the deadline**. No window means no sweep, so a 403, a truncated page, a deadline stop and a Graph outage all fail safe **by construction** rather than through a branch somebody has to remember to write |
+| **`present` is built from the PRE-collapse page. Trap one, and it would have been catastrophic** | `collapseRecurringSeries` keeps only the earliest occurrence still ahead of each series, so a seen-set built after it is missing most occurrences of every standing meeting — a sweep against it would flag them all. The collapse itself is untouched |
+| **A meeting is only judged if its `due_at` is INSIDE the window that was actually asked for** | The safety rail, and it is what stops the *Still open* pile — the very rows this exists to serve — being flagged wholesale on the first night. A next step due five days ago was never requested, so its absence proves nothing |
+| **`calendarExternalId()` was lifted OUT of `eventToItem`** | The sweep and the mapper must agree about what identifies a meeting, and here a disagreement would read as every occurrence of a series being cancelled at once. Same argument as `siteKey()` |
+| **A bug found and fixed on the way: cancelling one occurrence made the NEXT one disappear** | `collapseRecurringSeries` ran on the raw page **before** `eventToItem` dropped `isCancelled`. So cancelling the next occurrence of a weekly series meant the collapse elected that occurrence, it was then discarded, and the occurrence after it got no next step that night. The series went quiet and nothing said why. Cancelled events are now separated first |
+| **The counters live on `ingested_items`, NOT on `next_steps`** | `next_steps` is audited and the mirror deliberately is not. Believing an absence takes three misses, so counters on the audited table would write three rows per vanished meeting into the history a person actually reads. **Proved on the real database: six miss-writes produced ZERO audit rows.** It is also where they belong on the merits — the mirror records what the source said, and not seeing something tonight is a fact about the source object. `next_steps.vanished_at` is written once, so a flag is one clean line |
+| **Three misses AND 48 hours, not either** | The job fires twice a night, so three misses alone is about a night and a half rather than the three nights it is meant to mean. `first_missed_at` is stamped on the FIRST miss and never moved — move it each time and the elapsed test measures the gap between the last two runs, roughly two hours, quietly reducing the whole rule to "three misses". Both directions are pinned by self-tests and were proved against the real database |
+| **An explicitly cancelled event flags the SAME night** | Graph tombstones some cancellations rather than removing them, and that cannot be a bad night: the event came back fine, with a flag on it. Waiting three nights to repeat something the source stated outright would be timid. `vanished_reason` records which, because *"Cancelled in Outlook"* and *"No longer on the calendar"* deserve different confidence from the person reading them |
+| **A meeting that COMES BACK is un-flagged, counters and reason with it** | Otherwise the strip goes on saying a live meeting is gone, and the flag would be a one-way door |
+| **The marker is gold FILL with navy on top, on the row's second line** | Gold is 1.9:1 on white and can never carry text. The right-hand side belongs to Done and Dismiss — at 375px the row has ~295px and they take 121px — so the tag rides the second line beside the date and `flex-wrap`s onto its own line rather than pushing anything off. Measured: `document.body.scrollWidth` 375, no overflow |
+| **The tag retires the moment the row is closed** | A row reading *"Dismissed · Undo"* does not also need to be told why. The person has acted |
+
+**Tested end to end against the real database** under `qa-cancelled@bealesllc.com` (admin,
+rates), now **deactivated, do not delete** — with one disposable `next_steps` row and its
+own mirror row, swept by a synthetic window naming **only the QA mailbox**, so none of
+Ryan's rows were reachable.
+
+- One miss → counted, `first_missed_at` stamped, **not** flagged.
+- Three misses within seconds → **still not flagged**, and `first_missed_at` unmoved.
+- Backdated 21 hours, a fourth miss → **still not flagged**. Backdated 50 hours → **flagged**,
+  reason `absent`, `nextStepsVanished: 1`, and the row still `open`.
+- Absent again while flagged → **0**, counter frozen. Present → flag, reason and counters
+  all cleared. Cancelled → **flagged on the same pass** with no misses at all; saying so
+  twice wrote nothing.
+- **Six miss-writes, zero audit rows.** Only the three conclusions were recorded, each
+  attributed to *Nightly ingest* rather than to "—".
+- `/admin/history` reads *"Off the calendar — → Aug 22, 2026, 12:09 PM · Because — →
+  Cancelled · changed by Nightly ingest"*, and the clearing reads in reverse.
+- Browser: the tag renders in *Still open*, Dismiss and Undo both still work, and at 375px
+  it wraps to its own line with no horizontal overflow.
+
+**And then the real job, by hand against localhost, reported `nextStepsVanished: 0`** —
+the load-bearing safety proof, with Ryan's calendar window complete and swept.
+
+**It also found something real on that first run, and it is NOT test residue.** *Monthly
+BI Inspection*, due 19 Sep, took its first genuine miss. Chased before believing it:
+`calendarView` across 15–26 Sep returns 13 events and none is that meeting, and **all 260
+events on the mailbox, fully paged, hold nothing by that name and nothing carrying its
+`iCalUId`**. The meeting has been deleted. So Ryan has an open next step for a meeting
+that no longer exists — exactly the bug this session set out to fix — and it will flag
+itself after two more nightly misses. **Its counter was deliberately left alone**, because
+it is a true observation from a real run.
+
+**Counts before and after are identical: accounts 23, contacts 100, live buildings 53,
+activities 843, `next_steps` 5 (2 open, 3 dismissed), `ingested_items` 292, `audit_log`
+2193, and MRR $46,086.33.** `ingest_runs` 18 → 19, the one hand-run. The six audit rows
+the disposable row produced were removed with it — unlike earlier QA logins, they recorded
+nothing of value about real data.
+
+`db:verify` **230 → 238**. `graph:probe --selftest` **51 → 70**. The live probe now also
+says, per window, whether anything came back **cancelled** and whether the window was
+**complete enough to sweep at all** — it reads *"this window was complete"* and *"none of
+them is marked cancelled"* on 2026-08-22. `typecheck`, `lint` and a cold
+`rm -rf .next && npm run build` all pass.
+
+**What this has NOT been proved against: a real deletion, end to end through the cron.**
+The synthetic window proves every rule; what no session can force is Ryan deleting one of
+the two meetings that carry next steps, both of which have a customer on the invite. The
+*Monthly BI Inspection* row above is now the live test case, and it will answer on its own
+within about three nights.
 
 ### What changed on 2026-08-22: a rescheduled meeting stops lying
 
@@ -1085,6 +1163,9 @@ The 261 left over are genuinely a person's job — vendors (`CleanSmarts`), vari
 | File | Job |
 |---|---|
 | `supabase/migrations/20260818090000_ingest.sql` | `profiles.is_service`, `account_domains`, `is_public_email_domain()`, `next_steps` + its account trigger, `ingested_items`, `ingest_suggestions`, four new `gap_fill_allows` pairs, `v_quiet_accounts`, `v_domain_candidates` |
+| `supabase/migrations/20260825090000_next_step_vanished.sql` | `ingested_items.missed_sightings` / `first_missed_at`, `next_steps.vanished_at` / `vanished_reason`, `ingest_runs.next_steps_vanished` |
+| `src/lib/ingest/index.ts` | `CalendarWindow` and the optional `calendar` on `SourceFetch`; `sightingPatch()` and its two thresholds — pure, so the probe can pin them with no credentials |
+| `src/lib/ingest/run.ts` | `sweepVanished()` — what the calendar no longer holds, judged only inside a window a source vouched for |
 | `src/lib/supabase/ingest.ts` | Signs in as the machine account. Plain `createClient`, **not** `@supabase/ssr` — a cron run has no cookie jar |
 | `src/lib/ingest/addresses.ts` | Address parsing, the freemail list and the role-address list. **The freemail list is duplicated in SQL** as `is_public_email_domain()`, because `v_domain_candidates` needs it and a view cannot call TypeScript — `db:verify` asserts the two agree |
 | `src/lib/ingest/match.ts` | The three tiers, `creditTo()` and `directionOf()` |
@@ -1121,8 +1202,7 @@ Phase 7c added:
 | `src/app/(app)/admin/ingest/alias-map.tsx` | The phrase book, candidate chips, and the ambiguous-title list |
 | `src/app/(app)/admin/ingest/profile-aliases.tsx` | Other addresses that are one of us |
 
-`db:verify` grew from 118 to **157 checks**, and is **230** today. The last four arrived
-with no migration at all: closing a next step is behaviour, not schema.
+`db:verify` grew from 118 to **157 checks**, and is **238** today.
 
 ### Tested end to end, 2026-08-17
 
@@ -1587,8 +1667,8 @@ a contract that ended three months ago for exactly this reason.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local app on http://localhost:3000 |
-| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **230 checks** |
-| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **51** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse, the shared-mailbox display names and the reschedule rules. Its live output also counts occurrences already moved from their original slot |
+| `npm run db:verify` | Runs every migration + `seed.sql` against a throwaway in-memory Postgres and asserts RLS, triggers, revenue views and pay-rate access all behave. **Run this after any schema change** — no Docker needed. **238 checks** |
+| `npm run graph:probe` | What Microsoft Graph really returns. **Writes nothing.** Proves the tenant id, client id, secret and admin consent in one command, then repeats the mailbox access-policy test from the code that runs at 3am. Redacted and **safe to share** by default; `-- --raw` prints real content, `-- --selftest` runs **70** checks with no network — redaction, the timezone trap, the confidence tiers, the recurring-series collapse, the shared-mailbox display names, the reschedule rules and the absence rules. Its live output also counts occurrences already moved from their original slot, says how many came back **cancelled**, and states whether the window was complete enough to sweep at all |
 | `npm run granola:probe` | What the title matcher would make of every Granola note. **Writes nothing, anywhere.** Prints clean / ambiguous / matched-nothing, and the last of those is the list to read before adding aliases |
 | `npm run granola:probe -- --selftest` | **30** checks: the hazard cases for what a title MATCHES, plus what a matched note BECOMES — the per-source body limit, the whitespace rules and the timeline's excerpt threshold. No network, no database, no credentials — runs anywhere |
 | `npm run granola:backfill` | Dry run: what the history would create. `-- --commit` writes it, as one undoable batch, prompting for an admin email and password |
@@ -1912,18 +1992,19 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       gets proved the day one of those two genuinely moves, and `/admin/ingest` will say
       `· 1 rescheduled` on its own. Do not read a 0 as a failure without first checking
       whether the meeting had a next step at all.
-- [ ] **A CANCELLED meeting sits as an open next step for ever.** The harder sibling, and
-      deliberately its own session. Graph simply stops returning it from `calendarView` (and
-      `eventToItem` drops `isCancelled === true` anyway, which amounts to the same thing), so
-      this is **absence detection, not an update**. Two traps worth having written down
-      before anybody starts: `collapseRecurringSeries` **deliberately omits** most occurrences
-      of every series, so a naive "not seen tonight" sweep would dismiss every collapsed one;
-      and a 403, a truncated page, a deadline stop or a Graph outage would all read as mass
-      absence, so any sweep needs to run only when that mailbox's calendar returned 200,
-      untruncated, on a run that did not stop early. Flagging is probably safer than
-      auto-dismissing. **A partial mitigation shipped 2026-08-22:** a meeting renamed
-      `CANCELLED - …` now updates its title on the strip, which is the only signal Graph
-      gives for a cancellation the organiser renames rather than deletes.
+- [x] ~~**A CANCELLED meeting sits as an open next step for ever.**~~ — **done 2026-08-22
+      (second session).** It **flags, and never closes**: three complete windows in a row
+      without it, spanning at least 48 hours, or one that Graph returns marked cancelled.
+      Both traps were answered structurally rather than remembered — the seen-set is built
+      PRE-collapse, and a window is only swept if the source vouched for it, which a 403,
+      a truncated page or a deadline stop cannot do. `SourceFetch` gained one **optional**
+      field, so `fixtures.ts` and `granola.ts` did not change at all.
+- [ ] **A next step whose meeting moved BEYOND the 30-day horizon reads as absent.** Known,
+      accepted and commented rather than fixed: `FORWARD_DAYS = 30`, so a meeting dragged
+      past it leaves the window and looks deleted. The wording on the strip — *no longer on
+      the calendar* — stays true of the stretch we can see, and the flag clears itself the
+      moment the meeting comes back into range. Worth revisiting only if it happens to a
+      real meeting.
 - [ ] **14 `ingested_items` are `needs_review`, and they are all the same collision: `90
       Libbey`.** Read 2026-08-21: eleven are Wound Center inspections, three are Fox Rock
       conversations with Kristen Riordan about day porter hours, one names both 97 and 90.

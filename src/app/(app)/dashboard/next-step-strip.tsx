@@ -55,6 +55,27 @@ function overdueLabel(step: NextStep): string {
 }
 
 /**
+ * A meeting the calendar has stopped offering.
+ *
+ * The two are worded differently because they are not equally certain.
+ * `cancelled` is a fact Graph stated — it returned the event marked cancelled —
+ * so it can name Outlook. `absent` is an inference from three complete calendar
+ * windows in a row not holding it, so it says only what we can see: it is not
+ * there any more.
+ *
+ * Gold FILL with navy on top, never gold text: gold is 1.9:1 on white and fails
+ * every accessibility bar as type. Same treatment as the Review count in the
+ * sidebar.
+ */
+function VanishedTag({ vanished }: { vanished: 'cancelled' | 'absent' }) {
+  return (
+    <span className="bg-brand-gold text-primary shrink-0 rounded-[3px] px-1.5 py-px text-[11px] font-semibold">
+      {vanished === 'cancelled' ? 'Cancelled in Outlook' : 'No longer on the calendar'}
+    </span>
+  )
+}
+
+/**
  * One line of the strip. Shared by all three sections so they cannot drift
  * apart; only the label differs.
  *
@@ -93,10 +114,18 @@ function StepRow({
         <p className={`truncate text-sm font-medium ${closed ? 'text-muted-foreground' : ''}`}>
           {step.title}
         </p>
-        <p className="text-muted-foreground mt-0.5 truncate text-xs">
-          {when}
-          {place && <> · {place}</>}
-        </p>
+        {/* The tag rides the SECOND line beside the date and account, because
+            the right-hand side belongs to the two buttons: at 375px the row has
+            about 295px and they take 121px of it. `flex-wrap` so a long account
+            name pushes the tag onto its own line rather than off the screen,
+            and `min-w-0` on the text so it still ellipses. */}
+        <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs">
+          <span className="min-w-0 truncate">
+            {when}
+            {place && <> · {place}</>}
+          </span>
+          {step.vanished && !closed && <VanishedTag vanished={step.vanished} />}
+        </div>
       </div>
 
       {closed ? (

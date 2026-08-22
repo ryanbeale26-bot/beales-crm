@@ -79,6 +79,7 @@ function RunLine({ run }: { run: RunRow }) {
             sixth reading 0 on almost every run is the dead number this app
             argues against everywhere else. */}
         {run.nextStepsUpdated > 0 && ` · ${run.nextStepsUpdated} rescheduled`}
+        {run.nextStepsVanished > 0 && ` · ${run.nextStepsVanished} off the calendar`}
         {run.stoppedEarly && ' · stopped at the deadline'}
         {run.truncated.length > 0 && ` · ${run.truncated.join(', ')} read only part`}
       </div>

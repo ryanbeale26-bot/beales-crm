@@ -1614,6 +1614,168 @@ async function main() {
       movedAudit.rows[0]?.now?.startsWith('2026-08-29') === true,
   )
 
+  // --- next_steps: a meeting that VANISHED ------------------------------------
+  // The other half of the same problem, and a different kind. A move ARRIVES
+  // carrying a new time; a cancellation arrives as nothing at all, because
+  // Graph stops returning the event. The rule for how much silence is enough
+  // lives in sightingPatch() and is pinned by `graph:probe --selftest`. What
+  // belongs HERE is the schema it writes through, and above all the promise
+  // that counting misses is silent.
+  const vanishedCols = await db.query(
+    `select column_name, is_nullable, column_default
+     from information_schema.columns
+     where table_name = 'ingested_items'
+       and column_name in ('missed_sightings', 'first_missed_at')
+     order by column_name`,
+  )
+  check(
+    'the mirror can count how many complete windows came back without a meeting',
+    vanishedCols.rows.length === 2 &&
+      vanishedCols.rows.find((r) => r.column_name === 'missed_sightings')?.is_nullable === 'NO' &&
+      String(
+        vanishedCols.rows.find((r) => r.column_name === 'missed_sightings')?.column_default ?? '',
+      ).startsWith('0'),
+    JSON.stringify(vanishedCols.rows),
+  )
+
+  const runVanishedCol = await db.query(
+    `select is_nullable, column_default
+     from information_schema.columns
+     where table_name = 'ingest_runs' and column_name = 'next_steps_vanished'`,
+  )
+  check(
+    'a run can say how many meetings it flagged as off the calendar',
+    runVanishedCol.rows[0]?.is_nullable === 'NO' &&
+      String(runVanishedCol.rows[0]?.column_default ?? '').startsWith('0'),
+    JSON.stringify(runVanishedCol.rows[0]),
+  )
+
+  // The reason is constrained, so a future caller cannot invent a third kind
+  // that no screen knows how to word.
+  const badReason = await asUser(db, RYAN, async () => {
+    try {
+      await db.exec(
+        `insert into next_steps (title, owner_id, origin, source, external_id, vanished_reason)
+         values ('Bad reason', '${RYAN}', 'calendar', 'outlook_calendar',
+                 'ical-bad-reason', 'maybe');`,
+      )
+      return false
+    } catch {
+      return true
+    }
+  })
+  check('a vanished reason has to be cancelled or absent, not anything at all', badReason)
+
+  const NS_GONE = 'aaaaaaaa-0000-4000-8000-00000000ff04'
+  const MIRROR_GONE = 'aaaaaaaa-0000-4000-8000-00000000ff05'
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `insert into next_steps (id, title, owner_id, due_at, origin, source, external_id)
+       values ('${NS_GONE}', 'Deleted site walk', '${RYAN}',
+               timestamptz '2026-09-10 11:00:00+00', 'calendar',
+               'outlook_calendar', 'ical-gone/2026-09-10T11:00:00.0000000');
+       insert into ingested_items (id, source, external_id, mailbox_id, occurred_at, next_step_id, status)
+       values ('${MIRROR_GONE}', 'outlook_calendar',
+               'ical-gone/2026-09-10T11:00:00.0000000', '${RYAN}',
+               timestamptz '2026-09-10 11:00:00+00', '${NS_GONE}', 'linked');`,
+    ),
+  )
+
+  const auditBeforeMisses = await db.query(
+    `select count(*)::int as n from audit_log
+     where table_name = 'next_steps' and record_id = '${NS_GONE}'`,
+  )
+
+  // Three misses, exactly as the nightly job would write them. THE POINT of
+  // putting the counters on the mirror rather than on next_steps: ingested_items
+  // is deliberately not audited, so accumulating evidence is silent. Had these
+  // lived on next_steps, every vanished meeting would have written three rows
+  // into the history a person actually reads.
+  for (const n of [1, 2, 3]) {
+    await asUser(db, RYAN, () =>
+      db.exec(
+        `update ingested_items
+         set missed_sightings = ${n},
+             first_missed_at = timestamptz '2026-08-22 07:00:00+00'
+         where id = '${MIRROR_GONE}';`,
+      ),
+    )
+  }
+  const auditAfterMisses = await db.query(
+    `select count(*)::int as n from audit_log
+     where table_name = 'next_steps' and record_id = '${NS_GONE}'`,
+  )
+  check(
+    'counting three misses writes NOTHING to the next step or its history',
+    auditAfterMisses.rows[0].n === auditBeforeMisses.rows[0].n,
+    `${auditBeforeMisses.rows[0].n} -> ${auditAfterMisses.rows[0].n}`,
+  )
+
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `update next_steps
+       set vanished_at = timestamptz '2026-08-24 09:00:00+00', vanished_reason = 'absent'
+       where id = '${NS_GONE}';`,
+    ),
+  )
+  const flagAudit = await db.query(
+    `select count(*)::int as n,
+            max(new_values->>'vanished_reason') as reason,
+            max(changed_by::text) as who
+     from audit_log
+     where table_name = 'next_steps' and record_id = '${NS_GONE}' and action = 'update'`,
+  )
+  check(
+    'flagging it writes exactly one history row, naming who and why',
+    flagAudit.rows[0].n === 1 &&
+      flagAudit.rows[0].reason === 'absent' &&
+      flagAudit.rows[0].who === RYAN,
+    JSON.stringify(flagAudit.rows[0]),
+  )
+
+  // The whole design: flag, never close. A vanished meeting is still open, and
+  // still every bit as closeable by hand as it was before.
+  const stillOpen = await db.query(
+    `select status from next_steps where id = '${NS_GONE}'`,
+  )
+  check(
+    'a flagged meeting is still OPEN — the job marks it and never closes it',
+    stillOpen.rows[0]?.status === 'open',
+    String(stillOpen.rows[0]?.status),
+  )
+
+  const closedAnyway = await asUser(db, RYAN, () =>
+    db.query(
+      `update next_steps set status = 'dismissed'
+       where id = '${NS_GONE}' returning id`,
+    ),
+  )
+  check('and a person can still dismiss it themselves', closedAnyway.rows.length === 1)
+
+  // A meeting that comes back. Both halves clear, or the strip goes on saying
+  // a live meeting is gone.
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `update next_steps set status = 'open', vanished_at = null, vanished_reason = null
+       where id = '${NS_GONE}';
+       update ingested_items set missed_sightings = 0, first_missed_at = null
+       where id = '${MIRROR_GONE}';`,
+    ),
+  )
+  const cameBack = await db.query(
+    `select n.vanished_at, n.vanished_reason, i.missed_sightings, i.first_missed_at
+     from next_steps n join ingested_items i on i.next_step_id = n.id
+     where n.id = '${NS_GONE}'`,
+  )
+  check(
+    'a meeting that comes back clears the flag, the reason and the counters',
+    cameBack.rows[0]?.vanished_at === null &&
+      cameBack.rows[0]?.vanished_reason === null &&
+      cameBack.rows[0]?.missed_sightings === 0 &&
+      cameBack.rows[0]?.first_missed_at === null,
+    JSON.stringify(cameBack.rows[0]),
+  )
+
   // --- The allowlist ---------------------------------------------------------
   const linkApplied = await asUser(db, RYAN, () =>
     db.query(`select public.apply_gap_fill('activities', $1, $2::jsonb, $3) as n`, [

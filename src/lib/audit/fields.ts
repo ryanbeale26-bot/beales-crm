@@ -267,6 +267,12 @@ const FIELDS: Record<AuditTable, Fields> = {
     building_id: { label: 'Building', ref: 'buildings' },
     contact_id: { label: 'Contact', ref: 'contacts' },
     completed_at: { label: 'Completed', format: 'datetime' },
+    // A meeting that left the calendar. Both are here so a flag reads as
+    // English rather than as an entry with nothing in it — the renderer prints
+    // only allowlisted fields, so an update touching none of them would show a
+    // history line with an empty change list.
+    vanished_at: { label: 'Off the calendar', format: 'datetime' },
+    vanished_reason: { label: 'Because' },
   },
 
   // Role and rate ACCESS, never a rate. Rendered on the admin feed only.

@@ -1,7 +1,13 @@
 import 'server-only'
 
 import type { Mailbox } from '@/lib/ingest/mailboxes'
-import type { Participant, ParticipantRole, RawItem, SourceFetch } from '@/lib/ingest'
+import type {
+  CalendarWindow,
+  Participant,
+  ParticipantRole,
+  RawItem,
+  SourceFetch,
+} from '@/lib/ingest'
 
 /**
  * Microsoft Graph — mail and calendar.
@@ -246,35 +252,65 @@ function messageToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem 
   }
 }
 
-function eventToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | null {
+/**
+ * What identifies one meeting, for ever.
+ *
+ * MEASURED against the real tenant on 2026-08-20, replacing a note that said
+ * this path had never met real data. It has now, and recurrence is not the edge
+ * case that note assumed: of 48 events in one nightly window, 40 were
+ * occurrences, across 11 distinct series. The earlier reading of "every event is
+ * a singleInstance" came from a probe capped at $top=5.
+ *
+ * Two things the documentation gets wrong, neither of them harmful:
+ *   - originalStart IS populated on an occurrence, so the schema's rule holds.
+ *   - occurrences do NOT share the series master's iCalUId. Graph gives each its
+ *     own — 40 ids for 40 occurrences — so the suffix below was already belt and
+ *     braces rather than the thing keeping them apart. It stays, because a
+ *     tenant that behaves the documented way would need it.
+ *
+ * The suffix is the ORIGINAL start, never the current one, which is what lets a
+ * rescheduled occurrence still be recognised as itself after it moves.
+ *
+ * Lifted out of `eventToItem` so the absence sweep can build its seen-set with
+ * exactly this rule rather than a second copy of it. Two spellings of "which
+ * meeting is this" would eventually disagree, and here the disagreement would
+ * read as every occurrence of a series being cancelled at once.
+ */
+export function calendarExternalId(raw: Record<string, unknown>): string | null {
   const iCalUId = typeof raw.iCalUId === 'string' ? raw.iCalUId : ''
-  const start = raw.start as { dateTime?: string; timeZone?: string } | undefined
-  if (!iCalUId || !start?.dateTime) return null
-  if (raw.isCancelled === true) return null
+  if (!iCalUId) return null
 
-  // MEASURED against the real tenant on 2026-08-20, replacing a note that said
-  // this path had never met real data. It has now, and recurrence is not the
-  // edge case that note assumed: of 48 events in one nightly window, 40 were
-  // occurrences, across 11 distinct series. The earlier reading of "every event
-  // is a singleInstance" came from a probe capped at $top=5.
-  //
-  // Two things the documentation gets wrong, neither of them harmful:
-  //   - originalStart IS populated on an occurrence, so the schema's rule holds.
-  //   - occurrences do NOT share the series master's iCalUId. Graph gives each
-  //     its own — 40 ids for 40 occurrences — so the suffix below was already
-  //     belt and braces rather than the thing keeping them apart. It stays,
-  //     because a tenant that behaves the documented way would need it.
   const occurrence =
     (raw.type === 'occurrence' || raw.type === 'exception') &&
     typeof raw.originalStart === 'string'
       ? `/${raw.originalStart}`
       : ''
 
+  return `${iCalUId}${occurrence}`
+}
+
+/** Graph's own word for "this meeting is off". Its own function because the
+ *  mailbox loop needs the same test BEFORE collapsing, and `eventToItem` keeps
+ *  its own copy as belt and braces. */
+export function isCancelledEvent(raw: Record<string, unknown>): boolean {
+  return raw.isCancelled === true
+}
+
+function eventToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | null {
+  const externalId = calendarExternalId(raw)
+  const start = raw.start as { dateTime?: string; timeZone?: string } | undefined
+  if (!externalId || !start?.dateTime) return null
+  // Belt and braces: the mailbox loop now filters these out before collapsing,
+  // so nothing cancelled should reach here at all. Kept because this function is
+  // not private to that loop, and a cancelled meeting must never become an
+  // activity by some other route.
+  if (isCancelledEvent(raw)) return null
+
   const startsAt = graphTime(start.dateTime, start.timeZone)
 
   return {
     source: 'outlook_calendar',
-    externalId: `${iCalUId}${occurrence}`,
+    externalId,
     mailboxEmail: mailbox.address,
     occurredAt: startsAt,
     subject: typeof raw.subject === 'string' ? raw.subject : '',
@@ -285,7 +321,10 @@ function eventToItem(raw: Record<string, unknown>, mailbox: Mailbox): RawItem | 
       ),
       ...participants(raw.attendees, 'attendee'),
     ],
-    threadKey: iCalUId,
+    // The bare iCalUId, NOT the occurrence-suffixed external id: the thread key
+    // is what ties every occurrence of a series together, so suffixing it would
+    // make each occurrence a thread of its own.
+    threadKey: typeof raw.iCalUId === 'string' ? raw.iCalUId : null,
     // run.ts decides from this: still ahead of us is a next step, already past
     // is an activity.
     scheduled: { startsAt, allDay: raw.isAllDay === true },
@@ -372,6 +411,7 @@ export function makeGraphSource(creds: GraphCredentials, mailboxes: Mailbox[]): 
   return async ({ since, deadline }) => {
     const token = await accessToken(creds)
     const items: RawItem[] = []
+    const calendar: CalendarWindow[] = []
     const denied: string[] = []
     const failures: string[] = []
     let reachable = 0
@@ -426,11 +466,50 @@ export function makeGraphSource(creds: GraphCredentials, mailboxes: Mailbox[]): 
         const page = await getPages(token, calendarUrl, deadline)
         if (page.status === 200) {
           if (page.truncated) truncated = true
+
+          // Cancelled events are separated FIRST, before the collapse, and that
+          // order is load-bearing. `eventToItem` has always dropped them, but it
+          // runs afterwards — so cancelling the next occurrence of a weekly
+          // series meant the collapse elected that occurrence, it was then
+          // discarded, and the occurrence AFTER it got no next step that night.
+          // The series went quiet and nothing anywhere said why.
+          const live: Record<string, unknown>[] = []
+          const cancelled: string[] = []
+          const present: string[] = []
+
+          for (const raw of page.items) {
+            const externalId = calendarExternalId(raw)
+            if (externalId) present.push(externalId)
+            if (isCancelledEvent(raw)) {
+              if (externalId) cancelled.push(externalId)
+              continue
+            }
+            live.push(raw)
+          }
+
           // Collapse BEFORE mapping. One `now` for the whole mailbox, so a slow
           // page cannot make two occurrences of one series both look earliest.
-          for (const raw of collapseRecurringSeries(page.items, Date.now())) {
+          for (const raw of collapseRecurringSeries(live, Date.now())) {
             const item = eventToItem(raw, mailbox)
             if (item) items.push(item)
+          }
+
+          // Vouch for this window only if we genuinely saw all of it. A
+          // truncated page holds real events and looks complete, so inferring
+          // absence from one would flag meetings that are merely on page two —
+          // the most dangerous thing this file could get wrong.
+          //
+          // `present` is built from the PRE-collapse list on purpose: the
+          // collapse keeps one occurrence per series, so a sweep against what
+          // survives it would report every other occurrence as cancelled.
+          if (!page.truncated) {
+            calendar.push({
+              mailboxEmail: mailbox.address,
+              from: since,
+              to: until,
+              present,
+              cancelled,
+            })
           }
         } else if (page.status !== 403) {
           failures.push(`${mailbox.address} calendar: HTTP ${page.status}`)
@@ -453,6 +532,6 @@ export function makeGraphSource(creds: GraphCredentials, mailboxes: Mailbox[]): 
     // recording without losing the mailboxes that did work.
     if (failures.length > 0) console.error(`Graph: ${failures.join('; ')}`)
 
-    return { items, cursor: truncated ? 'truncated' : null }
+    return { items, cursor: truncated ? 'truncated' : null, calendar }
   }
 }
