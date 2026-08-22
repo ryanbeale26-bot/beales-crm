@@ -105,7 +105,7 @@ genuinely could be either contract. The fix is one alias per tenant. And a one-w
 what stops "Beth" filing a hospice note under Beth Israel. Single-word identities always need a
 curated alias, by design.
 
-**Note for Phase 7:** InspectQA calls a serviced site a **`building`**, not a "site". The CRM's `inspectqa_site_id` column and `inspectqa_site_map` table map to InspectQA's `buildings.id`. It also has `organizations`, so it is multi-tenant — filter to Beale's own org when syncing.
+**Note for Phase 8:** InspectQA calls a serviced site a **`building`**, not a "site" — confirmed in its own table editor 2026-08-22. The CRM's `inspectqa_site_id` column and `inspectqa_site_map` table map to InspectQA's `buildings.id`, which is a uuid. It also has `organizations`, so it is multi-tenant — filter to Beale's own org (`5949ef54-0743-4b02-a85f-3f14014ca…`, slug `beales`) when syncing. **That table holds exactly one row today, so the filter is a no-op and must be written anyway:** this project is being prepared as a spinout, so a second org is the plan. Full measured schema is in Open Questions.
 
 **3. InspectQA is read-only and authoritative for inspections and work orders.** Never write to it. Never rebuild inspection or work-order creation in the CRM. CRM queries always read the local mirror tables, so InspectQA being down never breaks the CRM.
 
@@ -2136,12 +2136,78 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       timestamps and before/after photos. **Nine buildings against 53 live CRM buildings**, so
       a sync enriches a slice and is never authoritative for the portfolio.
 
-      **What is still missing, and screenshots of the APP cannot give it:** column names, types,
-      nullability, foreign keys, and how `organizations` scopes the other tables. That needs
-      3–4 rows from the **Supabase table editor** of `illxdfvqvuwoqwbplgiy` — `buildings`,
-      `inspections`, `organizations` — where the column headers sit above the values. Plus the
-      four `INSPECTQA_*` variables and a role whose **RLS grants select and nothing else**,
-      because read-only has to live in policies rather than in our good intentions.
+      **The SCHEMA is now settled too — read from the Supabase table editor on 2026-08-22.**
+      Columns and sample rows below are measured, not assumed. What is still outstanding is
+      only the four `INSPECTQA_*` variables and a role whose **RLS grants select and nothing
+      else**, because read-only has to live in policies rather than in our good intentions.
+
+      **`organizations`** — `id` uuid pk, `name` text, `created_at` timestamptz, `slug` text,
+      `display_name` text. **Exactly ONE row today**: `5949ef54-0743-4b02-a85f-3f14014ca…`,
+      *Beale's LLC*, slug `beales`, created 2026-04-21. So the multi-tenant filter this file
+      has always insisted on is currently a **no-op — and it must still be written**, because
+      InspectQA is being prepared as a SaaS spinout and a second org is the plan rather than a
+      hypothetical. A sync that omits it works perfectly until the day it silently doesn't.
+
+      **`buildings`** — `id` uuid pk, `org_id` uuid, `name` text, `subtitle` text, `address`
+      text, `type` **enum `building_type`** (`healthcare`, `commercial_office` seen), `sqft`
+      int4, `client_contact_email` text, `created_at` timestamptz, **`archived_at` timestamptz**.
+      13 rows: 9 live and 4 archived, which is exactly the app's "9 in portfolio".
+
+      - **`archived_at` is the soft delete** — the same shape as our `deleted_at`. A sync filters
+        `archived_at is null`.
+      - **But that does NOT remove the junk row.** `HTA` at *"800 test at Winchester ma"*
+        (`9efd388e-…`) has `archived_at` **null**, so it is live as far as any query is
+        concerned. It has to be excluded by hand or archived in InspectQA first. The four rows
+        actually named `Test` / `TESt 123` *are* archived and filter out cleanly.
+      - **`address` is ONE free-text field** — `46 Obery St Plymouth, MA 02360`, `181 Ballardvale
+        St Wilmington, MA`. No structured city or postcode, so matching on address means parsing
+        free text all over again. **Match on `id` once, by hand, and store it.** That is what
+        `buildings.inspectqa_site_id` (uuid, present, **null on all 53**) and the empty
+        `inspectqa_site_map` are already there for.
+      - **`subtitle` is the customer**, and it is the disambiguator the mapping table above
+        needs: `181 Ballardvale St - Ciminelli`, `at South Shore Health`, `Suite 3500 - Wound
+        Care - Brown Health`. It is **null** on `The Wound Center`, `HTA` and one Test row, so a
+        sync cannot depend on it being there.
+      - **`sqft` is populated on 5 of the 9** — 46 Obery 30,080; 181 and 187 Ballardvale 100,000
+        each; Cancer Center 182,000; Wound Center 15,000. The CRM is missing square footage on
+        most of its book, so this is a legitimate **gap-fill suggestion** source. It is not
+        money, so it does not run into the "money is never machine-proposed" rule.
+
+      **`inspections`** — `id` uuid pk, `org_id` uuid, `building_id` uuid, `floor_id` uuid,
+      `inspector_id` uuid, `status` **enum `inspection_status`** (`complete`, `in_progress`
+      seen), `started_at` timestamptz, `completed_at` timestamptz, `score_pct` numeric,
+      `tasks_total` int4, and one further `tasks_…` column cut off by the screenshot. **135
+      rows.**
+
+      - An `in_progress` inspection carries **null** `completed_at`, `score_pct` and
+        `tasks_total`. A mirror must not read those as a zero score.
+      - Some `complete` rows are **score 0.00 with `tasks_total` 0** — started and abandoned.
+        Averaging over them would drag every building's number down.
+      - **`floor_id` sits on the inspection**, yet the 46 Obery report renders findings across
+        both 1st and 2nd floor. Whether an inspection is scoped to one floor or the column is
+        optional is **not yet known** and should be settled before anything joins on it.
+
+      **Other tables in that project, from the sidebar** — worth knowing before scoping v1:
+      `action_items`, `audit_log`, `building_floor_sections`, `client_errors`, `floors`,
+      `granola_notes`, `inspection_schedules`, `inspection_schedule_overrides`,
+      `inspection_sections`, `inspection_tasks`, `marketing_leads`, `missed_walks`,
+      `org_settings`, `permissions`, `photos`, `report_shares`, `role_permissions`, `rooms`,
+      `section_tasks`, `sections`, `user_building_assignments`, `users`, plus views
+      **`v_building_scoreboard`** and **`v_team_performance`**.
+
+      **Two of those matter beyond the sync:**
+
+      1. **InspectQA has its own `granola_notes` table.** Two systems may be reading the same
+         Granola account, and the CRM already holds 138 linked Granola activities. Check what
+         that table actually contains before Phase 8 writes anything — the "one email is one
+         activity" rule assumed a single consumer of each source.
+      2. **`v_team_performance` is flagged UNRESTRICTED**, meaning no RLS. A read-only role
+         defined purely in policies would still expose it. Worth deciding deliberately rather
+         than discovering.
+
+      **Read `v_building_scoreboard` rather than recomputing a score.** The app already shows a
+      per-building 89–100%, and a second implementation of one number is the mistake this repo
+      refuses everywhere else.
 
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
 
