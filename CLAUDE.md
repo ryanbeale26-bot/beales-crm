@@ -2034,8 +2034,11 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       the list. Some of these have no building record at all, which is the deeper fix.
 - [x] ~~**Is `46 Oberry St` a typo for `46 Obery St`?**~~ — yes, and Ryan corrected the building. It is
       now `BILH - 46 Obery St`, and the weekly inspection meeting matches Beth Israel (BIDMC).
-- [ ] **`797 Main St + Industrial Park`** is one building record with two addresses in one field,
-      named after its own account. Worth splitting or renaming.
+- [x] ~~**`797 Main St + Industrial Park`** is one building record with two addresses in one
+      field, named after its own account.~~ — **fixed, confirmed 2026-08-22.** The building is
+      now `797 Main St, Weymouth` under **South Shore Health**, the Industrial Park Rd sites
+      are three separate Fox Rock buildings (38, 40 and 44), and no account of that name
+      survives. InspectQA calls the same building *Grayken Center*.
 - [ ] Whether a **closed-won** deal should be able to lend its name to the matcher. Today only open
       deals do, deliberately — but several closed-won deals are places Beale's still services whose
       buildings were never created, so their notes match nothing.
@@ -2056,7 +2059,90 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       always the credentials are not the real blocker: **3–4 real rows from `buildings`,
       `inspections` and `organizations`** come before a line of sync code, the rule that caught
       Granola's ignored `limit` and the Graph timezone trap.
-- [ ] **7d, the extraction layer, is the one slice that could be dropped without harming the rest.** Ryan asked for written commitments as next steps; the honest expectation is roughly a 50% dismissal rate, and it is the only part of this phase where a language model writes anything. It ships last, on purpose, so the review screen has real use behind it first. **Three things measured on 2026-08-20 that decide its shape:** there is **no Anthropic API key in this project**, so it needs one set in `.env.local` and in Vercel Production before a line is written; **email is not the target** — 11 linked Outlook rows with snippets of 214–252 characters, capped by `bodyPreview`'s 255 — while **Granola is**, at 138 linked notes with a median snippet of 500 and **122 of them hitting that 500 cap**, carrying genuinely commitment-shaped prose; and because the stored snippet is truncated at 500, extraction has to run **at ingest time against the live summary**, not against the mirror.
+- [ ] **7d, the extraction layer, is DEFERRED. Ryan declined it on 2026-08-22 and asked to be
+      asked again on 2026-09-05.** A reminder is scheduled; it will re-measure rather than
+      quote the figures below, which are already going stale.
+
+      **The recommendation at the time was to build it, and it is logged here so the next
+      session does not have to reconstruct it.** 7d reads ingested Granola notes with a
+      language model and proposes written commitments as `next_steps` on `/review`. Money is
+      never model-proposed. It is the only part of Phase 7 where a model writes anything, and
+      the only slice that could be dropped without harming the rest — which is exactly why it
+      was always sequenced last.
+
+      **The case for:** the review queue and its undo path are built, tested and idle, so the
+      machinery it needs already exists and costs nothing more. Granola is measurably the right
+      target — 138 linked notes of genuinely commitment-shaped prose, against mail which cannot
+      be one because `graph.ts` only ever fetches `bodyPreview` at 255 characters. And since
+      notes started being stored **whole** rather than capped at 500 characters, the source text
+      is far richer than when the estimate below was made, so **the 50% figure is stale in
+      Ryan's favour and should be re-measured before it is quoted again.**
+
+      **The case against, which is why deferring is defensible rather than merely cautious:**
+      the honest expectation was roughly a **50% dismissal rate**, and the adoption bar governs
+      every decision in this project. A review queue that fills with rejects is precisely the
+      chore that kills adoption on a team that has never used a CRM — and the queue is at **0
+      suggestions** today, so 7d would be the thing that populates it. It also adds a recurring
+      API cost to a five-person internal tool and needs `ANTHROPIC_API_KEY` in `.env.local` and
+      Vercel Production, which is still absent.
+
+      **What should decide it in September:** how Ryan has treated the machine suggestions he
+      already gets. If most `next_steps` end up dismissed, that is evidence against building a
+      machine that makes more of them, and the right answer is to drop 7d permanently rather
+      than defer it a third time.
+
+- [ ] **Phase 8 / InspectQA — the SCOPE is now settled from screenshots, the SCHEMA is not.**
+      Read from `beales.inspectqa.com` on 2026-08-22 (the app's own screens, not the database),
+      and cross-checked against the live CRM. Two different things were still missing and only
+      one of them is now answered.
+
+      **What the screenshots settled — which nine buildings, and how they map:**
+
+      | InspectQA building | Maps to CRM | How clean |
+      |---|---|---|
+      | `46 Obery - Beth Israel Lahey Hospital - Plymouth` | `BILH - 46 Obery St` / Beth Israel (BIDMC) | clean |
+      | `187 Ballardvale St` *(- Ciminelli)* | `187 Ballardvale Rd, Wilmington` / Ciminelli | clean |
+      | `797 Main Street` *(Grayken Center)* | `797 Main St, Weymouth` / South Shore Health | clean |
+      | `Dana-Farber Brigham Cancer Center - South Shore Health` | `Cancer Center - Dana Farber / Brigham(101 Columbian St)` | clean |
+      | `181 Ballardvale St` *(- Ciminelli)* | **two candidates** — Ciminelli's `181 Ballardvale Rd` and Gener8's `181 Ballardvale st` Suite 102 | needs the name suffix |
+      | `The Wound Center - South Shore Health` | **two candidates** at 90 Libbey Pkwy — Fox Rock's `90 Libbey` and South Shore Health's `Wound Center` | needs the name suffix |
+      | `Suite 2100 - 851 Middle St - Brown Health` *(- Urology)* | CRM has ONE `851 Middle St`, under **HTA Realty** | **conflict, see below** |
+      | `Suite 3500 - 851 Middle Street - Brown Health` *(- Wound Care)* | **no CRM record at all** | missing |
+      | `HTA` at *"800 test at Winchester ma"* | **nothing — it is TEST DATA** | must be excluded |
+
+      **Four things follow, and each of them would have been a bug found late:**
+
+      1. **The key belongs on `buildings`, never on `sites`.** Three of the nine sit at an
+         address where the CRM holds two contracts, and InspectQA inspects the tenant's space.
+         Matching on address alone would file the tenant's inspections against the landlord for
+         3 of 9 — the landlord/tenant split biting exactly where it was predicted to.
+      2. **The disambiguator is the NAME SUFFIX, not the address.** InspectQA appends the
+         customer — `- Ciminelli`, `- South Shore Health`, `- Brown Health`. That suffix is the
+         only thing separating the two 181 Ballardvale contracts and the two at 90 Libbey.
+      3. **`851 Middle St` is one CRM building under HTA Realty and TWO InspectQA buildings
+         under Brown Health.** This file has recorded suite 2100 as HTA and suite 3500 as Brown
+         University Medical; InspectQA labels **both** suites Brown Health, 2100 as Urology and
+         3500 as Wound Care. **Ryan's to settle — it is a data question, not a code one**, and
+         it is the same gap already listed under the alias work.
+      4. **One row is junk and a sync must skip it.** `HTA` at *"800 test at Winchester ma"*
+         carries a 89% score and 0 open work orders. An importer that trusted the list would
+         create a building in Winchester that does not exist.
+
+      Also read off the screens, worth knowing before designing anything: **194 open work
+      orders and all 194 overdue**; each building carries a **quality score of 89–100%**, which
+      is adjacent to but NOT the same as the CRM's `health_score` and must not be auto-derived
+      into it; and an inspection report carries id, building, date, inspector, duration,
+      task counts (`1365/1371`), a pass threshold, per-item notes, assignee, resolved
+      timestamps and before/after photos. **Nine buildings against 53 live CRM buildings**, so
+      a sync enriches a slice and is never authoritative for the portfolio.
+
+      **What is still missing, and screenshots of the APP cannot give it:** column names, types,
+      nullability, foreign keys, and how `organizations` scopes the other tables. That needs
+      3–4 rows from the **Supabase table editor** of `illxdfvqvuwoqwbplgiy` — `buildings`,
+      `inspections`, `organizations` — where the column headers sit above the values. Plus the
+      four `INSPECTQA_*` variables and a role whose **RLS grants select and nothing else**,
+      because read-only has to live in policies rather than in our good intentions.
+
 - [ ] Retire `kbqivepqykccdyexgnhu` — rename now, delete once it has sat unused for a couple of weeks.
 
 ## Decision log
