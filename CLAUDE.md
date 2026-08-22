@@ -2195,12 +2195,15 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
       `section_tasks`, `sections`, `user_building_assignments`, `users`, plus views
       **`v_building_scoreboard`** and **`v_team_performance`**.
 
-      **Two of those matter beyond the sync:**
+      **Two of those were flagged, and one turned out to be nothing:**
 
-      1. **InspectQA has its own `granola_notes` table.** Two systems may be reading the same
-         Granola account, and the CRM already holds 138 linked Granola activities. Check what
-         that table actually contains before Phase 8 writes anything — the "one email is one
-         activity" rule assumed a single consumer of each source.
+      1. ~~InspectQA has its own `granola_notes` table, so two systems may be reading the same
+         Granola account.~~ — **not a risk. Ryan confirmed 2026-08-22: the table is a
+         PLACEHOLDER and nothing is ever written to it.** InspectQA does not ingest Granola
+         today. The CRM remains the only consumer of that account, so the "one email is one
+         activity" rule is not threatened and there is nothing to reconcile. **Do not spend a
+         session investigating it.** What to do with the table, if anything, is a decision for
+         later and belongs to InspectQA rather than to the CRM.
       2. **`v_team_performance` is flagged UNRESTRICTED**, meaning no RLS. A read-only role
          defined purely in policies would still expose it. Worth deciding deliberately rather
          than discovering.
