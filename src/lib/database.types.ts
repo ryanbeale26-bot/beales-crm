@@ -1483,6 +1483,7 @@ export type Database = {
           id: string
           ingested: number
           next_steps_created: number
+          next_steps_updated: number
           ok: boolean | null
           ran_for_ms: number | null
           seen: number
@@ -1503,6 +1504,7 @@ export type Database = {
           id?: string
           ingested?: number
           next_steps_created?: number
+          next_steps_updated?: number
           ok?: boolean | null
           ran_for_ms?: number | null
           seen?: number
@@ -1523,6 +1525,7 @@ export type Database = {
           id?: string
           ingested?: number
           next_steps_created?: number
+          next_steps_updated?: number
           ok?: boolean | null
           ran_for_ms?: number | null
           seen?: number
@@ -3767,13 +3770,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["to_building_id"]
-            isOneToOne: false
-            referencedRelation: "buildings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "buildings"
@@ -3783,8 +3779,8 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_current_value"
-            referencedColumns: ["building_id"]
+            referencedRelation: "buildings"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
@@ -3797,7 +3793,7 @@ export type Database = {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
             isOneToOne: false
-            referencedRelation: "v_building_hours"
+            referencedRelation: "v_building_current_value"
             referencedColumns: ["building_id"]
           },
           {
@@ -3810,13 +3806,20 @@ export type Database = {
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
             columns: ["to_building_id"]
+            isOneToOne: false
+            referencedRelation: "v_building_hours"
+            referencedColumns: ["building_id"]
+          },
+          {
+            foreignKeyName: "employee_assignments_building_id_fkey"
+            columns: ["from_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
           },
           {
             foreignKeyName: "employee_assignments_building_id_fkey"
-            columns: ["from_building_id"]
+            columns: ["to_building_id"]
             isOneToOne: false
             referencedRelation: "v_building_mrr_by_month"
             referencedColumns: ["building_id"]
