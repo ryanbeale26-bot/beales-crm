@@ -1789,6 +1789,14 @@ also lag the live DOM by a beat, so **read the DOM to assert and use the screens
 refuses synthetic clicks outright: drive mobile through `element.click()` and native value setters
 rather than coordinates.
 
+**There is no Prettier in this project, and `npx prettier --write` will rewrite whole files.**
+Learned the expensive way on 2026-08-22: there is no `.prettierrc`, no `prettier` key in
+`package.json` and no prettier plugin in `eslint.config.mjs` — the formatting here is
+hand-maintained at about 100 columns. `npx` happily downloads its own copy, applies its
+**80-column default**, and reformats every line it touches, so a 20-line change came back
+as 507 changed lines in one file. `git checkout --` the file and re-apply the edit by
+hand. `npm run lint` is the only formatter this repo has.
+
 **A PostgREST `select` must be a single string LITERAL, not a concatenation.** supabase-js parses
 the select string at the *type* level to work out the row type, and `'a, b, ' + 'c(d)'` widens to
 `string` — so every column comes back as `GenericStringError` and the whole query fails to typecheck
