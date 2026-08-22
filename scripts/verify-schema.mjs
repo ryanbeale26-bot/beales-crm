@@ -1360,6 +1360,34 @@ async function main() {
   )
   check('every member can see whether the job ran', victorSeesRuns.rows[0].n === 1)
 
+  // A run that RESCHEDULED something. The column is what makes the fix visible
+  // at all: without it the only sign a moved meeting was ever corrected is the
+  // dashboard reading differently from how somebody remembers it yesterday.
+  // Defaulted so every run written before 2026-08-22 reads 0 rather than null,
+  // which the screen would have to special-case.
+  const rescheduleCol = await db.query(
+    `select is_nullable, column_default, data_type
+     from information_schema.columns
+     where table_name = 'ingest_runs' and column_name = 'next_steps_updated'`,
+  )
+  check(
+    'a run can say how many meetings had moved since we last saw them',
+    rescheduleCol.rows[0]?.is_nullable === 'NO' &&
+      String(rescheduleCol.rows[0]?.column_default ?? '').startsWith('0'),
+    JSON.stringify(rescheduleCol.rows[0]),
+  )
+
+  const rescheduleRecorded = await asUser(db, RYAN, () =>
+    db.query(
+      `update ingest_runs set next_steps_updated = 2 where id = '${openedRun?.id}'
+       returning next_steps_updated`,
+    ),
+  )
+  check(
+    'and a member can record it, the ingest profile being a member and not an admin',
+    rescheduleRecorded.rows[0]?.next_steps_updated === 2,
+  )
+
   // Machine-written twice a night. Auditing it would grow audit_log faster than
   // the thing it records.
   const runsAudited = await db.query(
@@ -1543,6 +1571,47 @@ async function main() {
   check(
     "any member can close another member's next step — the owner check is the app's",
     byAnother.rows.length === 1,
+  )
+
+  // --- next_steps: a meeting that MOVED --------------------------------------
+  // 20260818090000_ingest.sql has always said a calendar event that moves "is
+  // updated rather than duplicated". The unique key stopped the duplication;
+  // nothing performed the update until 2026-08-22, so a meeting dragged from
+  // Tuesday to Thursday read as Tuesday for ever and then sat in "Still open"
+  // as though somebody had missed it. The rule lives in nextStepPatch() and is
+  // pinned by `graph:probe --selftest`; what belongs HERE is that the write it
+  // produces is recorded against the person — or the machine — that made it.
+  const NS_MOVED = 'aaaaaaaa-0000-4000-8000-00000000ff03'
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `insert into next_steps (id, title, owner_id, due_at, origin, source, external_id)
+       values ('${NS_MOVED}', 'Weekly site walk', '${RYAN}',
+               timestamptz '2026-08-27 11:00:00+00', 'calendar',
+               'outlook_calendar', 'ical-moved/2026-08-27T11:00:00.0000000');`,
+    ),
+  )
+  await asUser(db, RYAN, () =>
+    db.exec(
+      `update next_steps set due_at = timestamptz '2026-08-29 11:00:00+00'
+       where id = '${NS_MOVED}';`,
+    ),
+  )
+  const movedAudit = await db.query(
+    `select changed_by,
+            old_values->>'due_at' as was,
+            new_values->>'due_at' as now
+     from audit_log
+     where table_name = 'next_steps' and record_id = '${NS_MOVED}' and action = 'update'
+     order by changed_at desc, id desc limit 1`,
+  )
+  // /admin/history renders this for free — next_steps is already on the audit
+  // renderer's allowlist with due_at labelled — and it is the only evidence
+  // anywhere that a reschedule landed rather than a person editing by hand.
+  check(
+    'moving a next step records the old time, the new one, and who moved it',
+    String(movedAudit.rows[0]?.changed_by) === RYAN &&
+      movedAudit.rows[0]?.was?.startsWith('2026-08-27') === true &&
+      movedAudit.rows[0]?.now?.startsWith('2026-08-29') === true,
   )
 
   // --- The allowlist ---------------------------------------------------------

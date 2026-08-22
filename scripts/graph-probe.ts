@@ -25,6 +25,7 @@
  */
 
 import { collapseRecurringSeries, graphTime } from '@/lib/ingest/graph'
+import { nextStepPatch, type RawItem } from '@/lib/ingest'
 import { matchParticipants, type Directory } from '@/lib/ingest/match'
 import { splitName } from '@/lib/ingest/addresses'
 import type { Participant } from '@/lib/ingest'
@@ -587,6 +588,109 @@ function recurrenceChecks(check: Check): void {
     shuffled.length === 1 && shuffled[0].id === 'soon',
     JSON.stringify(shuffled.map((e) => e.id)),
   )
+
+  // --- A meeting that MOVED ---------------------------------------------------
+  // graph.ts suffixes the ORIGINAL start, not the current one, so a rescheduled
+  // occurrence keeps its external_id and arrives at run.ts as already-seen. Until
+  // 2026-08-22 that path answered with a timestamp touch and nothing else, so the
+  // dashboard read Tuesday for ever and then filed it under "Still open" as
+  // though it had been missed.
+  console.log('')
+
+  const scheduledItem = (
+    subject: string,
+    startsAt: string,
+    allDay = false,
+  ): RawItem => ({
+    source: 'outlook_calendar',
+    externalId: 'ical-1/2026-08-27T11:00:00.0000000',
+    mailboxEmail: 'ryan@bealesllc.com',
+    occurredAt: startsAt,
+    subject,
+    text: null,
+    participants: [],
+    threadKey: 'ical-1',
+    scheduled: { startsAt, allDay },
+  })
+
+  const openRow = {
+    status: 'open',
+    title: '46 Obery St Cleaning Inspection',
+    due_at: '2026-08-27T11:00:00+00:00',
+    all_day: false,
+  }
+
+  const moved = nextStepPatch(openRow, scheduledItem(openRow.title, '2026-08-29T11:00:00.000Z'))
+  check(
+    'a meeting moved two days patches its due date',
+    moved?.due_at === '2026-08-29T11:00:00.000Z' && moved?.title === undefined,
+    JSON.stringify(moved),
+  )
+
+  // THE trap. Postgres hands back +00:00 and the item carries .000Z. Same
+  // moment, different text — so a string comparison would report a change every
+  // single night, write an audit row per meeting per run, and make the new
+  // "rescheduled" count on /admin/ingest mean nothing at all.
+  check(
+    'the same instant written +00:00 and .000Z is NOT a change',
+    nextStepPatch(openRow, scheduledItem(openRow.title, '2026-08-27T11:00:00.000Z')) === null,
+  )
+
+  check(
+    'a renamed meeting patches its title',
+    nextStepPatch(openRow, scheduledItem('CANCELLED - 46 Obery St', openRow.due_at))?.title ===
+      'CANCELLED - 46 Obery St',
+  )
+
+  check(
+    'a meeting that became all-day patches the flag',
+    nextStepPatch(openRow, scheduledItem(openRow.title, openRow.due_at, true))?.all_day === true,
+  )
+
+  // Closing one was a decision. A nightly job that quietly reopens or re-times
+  // it is how somebody stops trusting the strip — and it would undo the
+  // documented "dismiss means not this week" behaviour of the series collapse.
+  const later = scheduledItem('Moved and renamed', '2026-09-05T11:00:00.000Z')
+  check(
+    'a next step marked done is left exactly alone',
+    nextStepPatch({ ...openRow, status: 'done' }, later) === null,
+  )
+  check(
+    'a next step dismissed is left exactly alone',
+    nextStepPatch({ ...openRow, status: 'dismissed' }, later) === null,
+  )
+
+  check(
+    'an unchanged meeting seen again patches nothing',
+    nextStepPatch(openRow, scheduledItem(openRow.title, openRow.due_at)) === null,
+  )
+
+  // next_steps.title has `check (title <> '')`, so the fallback is not cosmetic.
+  check(
+    'an untitled meeting becomes "Meeting", never an empty string',
+    nextStepPatch(openRow, scheduledItem('', openRow.due_at))?.title === 'Meeting',
+  )
+
+  // Mail and Granola never carry a schedule, and must never reach this at all.
+  const mail: RawItem = {
+    source: 'outlook',
+    externalId: '<abc@contoso.com>',
+    mailboxEmail: 'ryan@bealesllc.com',
+    occurredAt: '2026-08-27T11:00:00.000Z',
+    subject: 'Re: invoice',
+    text: null,
+    participants: [],
+    threadKey: null,
+  }
+  check('an email is never treated as a reschedule', nextStepPatch(openRow, mail) === null)
+
+  // Nullable on the column, impossible on a calendar row — but if one ever
+  // exists, writing the real time is the right answer, not skipping it.
+  check(
+    'a next step with no due date at all counts as moved',
+    nextStepPatch({ ...openRow, due_at: null }, scheduledItem(openRow.title, openRow.due_at))
+      ?.due_at === openRow.due_at,
+  )
 }
 
 async function main() {
@@ -722,6 +826,31 @@ async function main() {
     console.log(
       `  ${ahead.length} still ahead; after collapsing each series to its next meeting, ` +
         `${kept.length} would be read as next steps`,
+    )
+
+    // Occurrences somebody has ALREADY dragged to a different slot. This is the
+    // real-data proof that identity survives a move: graph.ts keys on
+    // iCalUId + '/' + originalStart, so the mirror row still matches while the
+    // time underneath it changes — which is the whole basis of the reschedule
+    // path in run.ts. Counted rather than sampled, and it says so plainly when
+    // there are none, because "no examples in this window" is a fact and
+    // "therefore it works" is not.
+    const rescheduled = occurrences.filter((e) => {
+      const original = typeof e.originalStart === 'string' ? e.originalStart : null
+      if (!original) return false
+      const startedAt = startsAt(e)
+      if (startedAt === null) return false
+      try {
+        return new Date(graphTime(original)).getTime() !== startedAt
+      } catch {
+        return false
+      }
+    })
+    console.log(
+      rescheduled.length === 0
+        ? '  none of them has been moved from its original slot in this window'
+        : `  ${rescheduled.length} of them HAS been moved from its original slot — ` +
+            'each keeps its original-start external_id, which is what lets run.ts update it',
     )
     console.log('\n  the first few shapes:')
     events.items.slice(0, 5).forEach((e, i) => report(`event ${i + 1}`, e))
