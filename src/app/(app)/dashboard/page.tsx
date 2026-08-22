@@ -8,6 +8,8 @@ import {
   fetchOverdueNextSteps,
   fetchTodaysMeetings,
   fetchUpcomingNextSteps,
+  type OverdueNextSteps,
+  type UpcomingNextSteps,
 } from '@/lib/ingest/next-steps'
 import { fetchMyFocus } from '@/lib/reports/my-focus'
 import { createClient } from '@/lib/supabase/server'
@@ -42,13 +44,18 @@ export default async function DashboardPage() {
     // is one indexed query capped at five rows (next_steps_owner_idx covers
     // exactly this), and asking for it afterwards would put a second round trip
     // on the critical path of the first screen anybody opens.
-    user ? fetchUpcomingNextSteps(supabase, user.id) : Promise.resolve([]),
+    user
+      ? fetchUpcomingNextSteps(supabase, user.id)
+      // Annotated so the signed-out fallback stays the same TYPE as the real
+      // thing. Without it the union has no `error` and the strip could never
+      // be told a query failed.
+      : Promise.resolve<UpcomingNextSteps>({ meetings: [] }),
     // What slipped. Fetched every time rather than only when today is empty:
     // it is the one section that must never be gated, and it is the same
     // indexed query read backwards.
     user
       ? fetchOverdueNextSteps(supabase, user.id)
-      : Promise.resolve({ meetings: [], total: 0 }),
+      : Promise.resolve<OverdueNextSteps>({ meetings: [], total: 0 }),
     supabase
       .from('ingest_suggestions')
       .select('*', { count: 'exact', head: true })
@@ -62,7 +69,12 @@ export default async function DashboardPage() {
   // where today is not, and Still open plus Coming up is ten rows above Top
   // focus on the first screen anybody opens. Overdue drains, so Coming up comes
   // back on its own.
-  const showUpcoming = !hasToday && overdue.meetings.length === 0 && upcoming.length > 0
+  const showUpcoming = !hasToday && overdue.meetings.length === 0 && upcoming.meetings.length > 0
+  // All three readers return an error and, until now, all three were ignored —
+  // so a failed query rendered as an empty section, which reads as a quiet week.
+  // The first one that failed is enough: they are three shapes of one table, so
+  // whatever broke one has almost certainly broken the others.
+  const stripError = today?.error ?? overdue.error ?? upcoming.error ?? null
 
   const [
     { data: coverage, error: coverageError },
@@ -124,9 +136,10 @@ export default async function DashboardPage() {
         overdueTotal={overdue.total}
         today={today?.meetings ?? []}
         matched={today?.matched ?? 0}
-        upcoming={upcoming}
+        upcoming={upcoming.meetings}
         showUpcoming={showUpcoming}
         waiting={waiting}
+        readError={stripError}
       />
 
       {/*

@@ -163,6 +163,7 @@ export function NextStepStrip({
   upcoming,
   showUpcoming,
   waiting,
+  readError,
 }: {
   overdue: NextStep[]
   overdueTotal: number
@@ -171,6 +172,10 @@ export function NextStepStrip({
   upcoming: NextStep[]
   showUpcoming: boolean
   waiting: number
+  /** A section that failed to LOAD, as opposed to a section with nothing in it.
+   *  All three readers have always returned this and nothing has ever rendered
+   *  it, so a broken query looked exactly like a quiet week. */
+  readError?: string | null
 }) {
   const router = useRouter()
   const [closed, setClosed] = useState<Record<string, Closed>>({})
@@ -221,7 +226,11 @@ export function NextStepStrip({
   // It renders only when there is something to say. Four of the five people
   // have never signed in, and a permanently empty strip at the top of the first
   // screen they ever see is worse than no strip.
-  if (!hasOverdue && !hasToday && !showUpcoming && waiting === 0) return null
+  //
+  // A read error counts as something to say: the whole point of surfacing it is
+  // the case where nothing loaded, so returning null on it would swallow it
+  // exactly where it matters most.
+  if (!hasOverdue && !hasToday && !showUpcoming && waiting === 0 && !readError) return null
 
   return (
     <div className="border-border mb-8 rounded-[3px] border p-3">
@@ -294,6 +303,12 @@ export function NextStepStrip({
             Have a look
           </Link>{' '}
           — or don&apos;t; they expire on their own.
+        </p>
+      )}
+
+      {readError && (
+        <p className="text-destructive text-sm" role="alert">
+          Could not load your next steps: {readError}
         </p>
       )}
 

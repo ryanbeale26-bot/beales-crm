@@ -140,14 +140,24 @@ export async function fetchOverdueNextSteps(
   return { meetings: (data ?? []).map(toNextStep), total: count ?? 0 }
 }
 
+export type UpcomingNextSteps = {
+  meetings: NextStep[]
+  error?: string
+}
+
 /** Everything still open and owned by this person, soonest first. Used by the
- *  dashboard when there is nothing on today. */
+ *  dashboard when there is nothing on today.
+ *
+ *  It used to destructure a bare `const { data }` while both readers above
+ *  returned an error, so a query that FAILED rendered as a section with nothing
+ *  in it — indistinguishable from a quiet week, and silent for as long as
+ *  nobody thought to check. */
 export async function fetchUpcomingNextSteps(
   supabase: Supabase,
   userId: string,
   limit = 5,
-): Promise<NextStep[]> {
-  const { data } = await supabase
+): Promise<UpcomingNextSteps> {
+  const { data, error } = await supabase
     .from('next_steps')
     .select(MEETING_COLUMNS)
     .eq('status', 'open')
@@ -156,5 +166,7 @@ export async function fetchUpcomingNextSteps(
     .order('due_at')
     .limit(limit)
 
-  return (data ?? []).map(toNextStep)
+  if (error) return { meetings: [], error: error.message }
+
+  return { meetings: (data ?? []).map(toNextStep) }
 }
