@@ -1667,6 +1667,19 @@ in a car park.
 
 ### Gotchas already paid for
 
+**`CRON_SECRET` in `.env.local` is a PLACEHOLDER, and Vercel's real one cannot be read back.**
+Found 2026-08-22 after two 401s. The local file still holds the example value from
+`.env.local.example`, which works fine against `localhost:3000` — the dev server and the curl
+read the same file, so it matches itself — and returns **`{"error":"Not authorised"}`** against
+production, because Vercel has a real value. Vercel's copy is marked **Sensitive**, so *Copy to
+Clipboard* is locked and `vercel env pull` will not return it either; it is write-only by
+design. **The nightly cron is completely unaffected** — Vercel Cron supplies its own value on
+both sides, and 16 runs prove it. So: hand-run the job against **localhost**, and treat the
+nightly run as the production proof. **Do not rotate the Vercel value without redeploying
+immediately afterwards** — an env var change only takes effect on the next deployment, so
+between the rotation and the redeploy the cron would 401 every night and nothing would say so
+except staleness.
+
 **A `maxDuration` above the plan's ceiling fails the BUILD, not the request.** `src/app/api/cron/ingest/route.ts`
 declared 800 — the Pro-with-Fluid-Compute number — while the project runs on Hobby, which allows at
 most 300. Vercel rejects the whole deployment with *"Builder returned invalid maxDuration value"*.
@@ -1886,9 +1899,19 @@ sheet at the top of `/admin/import`, fill it in, upload it back.
 - [x] ~~**A rescheduled meeting never updates its `due_at`.**~~ — **done 2026-08-22.** The
       behaviour was fixed rather than the comment, so `20260818090000_ingest.sql:107` is now
       **true and the migration file was deliberately not edited**. Only `open` rows move,
-      only `due_at` / `all_day` / `title`, and never a re-match. **Still unproved against a
-      real moved meeting** — `graph:probe` reports none in the current window, so Ryan
-      moving one in Outlook is the outstanding check.
+      only `due_at` / `all_day` / `title`, and never a re-match.
+- [ ] **The reschedule path has not yet met a REAL moved meeting, and cannot easily be made
+      to.** Proved six ways against the real database with a synthetic Graph payload, and
+      `graph:probe` reports no occurrence moved from its original slot in the current window.
+      The obstacle is not the code: **calendar events match on ATTENDEES, not titles**
+      (`usesTitleMatching` is granola-only), so the only two meetings in Ryan's entire
+      calendar that carry a next step are `46 Obery St Cleaning Inspection` and
+      `Monthly BI Inspection` — **and both have a customer on the invite.** Ryan declined to
+      move either to test software, which is the right call. Moving any other meeting reports
+      `nextStepsUpdated: 0` **correctly**, because it has no next step to update. So this
+      gets proved the day one of those two genuinely moves, and `/admin/ingest` will say
+      `· 1 rescheduled` on its own. Do not read a 0 as a failure without first checking
+      whether the meeting had a next step at all.
 - [ ] **A CANCELLED meeting sits as an open next step for ever.** The harder sibling, and
       deliberately its own session. Graph simply stops returning it from `calendarView` (and
       `eventToItem` drops `isCancelled === true` anyway, which amounts to the same thing), so
